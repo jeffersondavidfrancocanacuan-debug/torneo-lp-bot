@@ -4,6 +4,7 @@ from discord.ext import tasks
 import requests
 import json
 import os
+import random
 import datetime
 from threading import Thread
 from flask import Flask, jsonify, render_template_string
@@ -48,6 +49,20 @@ LOGROS = {
     'top1':    {'nombre': 'Cima',    'desc': 'Llego al puesto #1 de su categoria'},
     'top3':    {'nombre': 'Podio',   'desc': 'Entro al top 3 de su categoria'},
 }
+
+# ------------------- ESCUDOS AZULES (maldiciones estilo soloqchallenge.gg) -------------------
+MALDICION_COOLDOWN_HORAS = 24
+MALDICION_MAX_ACTIVAS = 3
+MALDICION_DURACION_HORAS = 24
+
+EFECTOS_MALDICION = [
+    'Hechizos de invocador obligatorios: solo Flash + Ignite en tu proxima partida.',
+    'Campeon aleatorio obligatorio (usa una ruleta random) en tu proxima partida.',
+    'Rol/posicion aleatoria obligatoria en tu proxima partida.',
+    'Debes banear el campeon que te pida el que te maldijo en tu proxima partida.',
+    'COMODIN - Rebote: la maldicion vuelve a quien te la lanzo.',
+    'COMODIN - Rebote al azar: la maldicion salta a otro jugador random del torneo.',
+]
 
 # Sesiones de voz activas en memoria: {discord_id: datetime_de_ultimo_checkpoint}
 VOICE_SESIONES = {}
@@ -107,6 +122,32 @@ def flush_voice_time(discord_id):
     if cambiado:
         guardar_db(db)
 
+
+# ------------------- ESCUDOS AZULES: helpers -------------------
+
+def maldiciones_activas_de(data):
+    ahora = datetime.datetime.now()
+    activas = []
+    for m in data.get('maldiciones', []):
+        try:
+            fecha = datetime.datetime.fromisoformat(m['fecha'])
+        except Exception:
+            continue
+        if (ahora - fecha).total_seconds() / 3600 < MALDICION_DURACION_HORAS:
+            activas.append(m)
+    return activas
+
+
+def tiempo_restante_cooldown(data):
+    ultimo = data.get('ultimo_escudo_uso')
+    if not ultimo:
+        return 0
+    try:
+        fecha = datetime.datetime.fromisoformat(ultimo)
+    except Exception:
+        return 0
+    transcurridas = (datetime.datetime.now() - fecha).total_seconds() / 3600
+    return max(MALDICION_COOLDOWN_HORAS - transcurridas, 0)
 
 
 # ------------------- RIOT API -------------------
@@ -211,6 +252,8 @@ def calcular_tabla(db):
             'estado': data.get('estado', 'aprobado'),
             'tiempo_voz_min': tiempo_voz,
             'voz_verificado': tiempo_voz >= VOZ_MINIMA_MINUTOS,
+            'elo_previo': data.get('elo_previo', ''),
+            'escudos': data.get('escudos', 0),
         }
         if jugador['estado'] == 'pendiente':
             pendientes.append(jugador)
@@ -223,7 +266,6 @@ def calcular_tabla(db):
     high.sort(key=lambda x: x['total'], reverse=True)
     low.sort(key=lambda x: x['total'], reverse=True)
     return high, low, pendientes, sin_voz
-
 
 
 # ------------------- LOGROS Y ROLES -------------------
@@ -255,10 +297,11 @@ async def procesar_logros_y_roles(canal, high, low, db):
             recien_desbloqueados = nuevos - logros_actuales
             if recien_desbloqueados:
                 data['logros'] = list(logros_actuales | nuevos)
+                data['escudos'] = data.get('escudos', 0) + len(recien_desbloqueados)
                 for clave in recien_desbloqueados:
                     info_logro = LOGROS.get(clave)
                     if info_logro:
-                        anuncios.append(f"{info_logro['nombre']} - **{j['nombre']}** {info_logro['desc']} ({'High' if categoria == 'high' else 'Low'} Elo)")
+                        anuncios.append(f"{info_logro['nombre']} - **{j['nombre']}** {info_logro['desc']} ({'High' if categoria == 'high' else 'Low'} Elo) (+1 Escudo Azul)")
 
     guardar_db(db)
 
@@ -299,8 +342,9 @@ async def procesar_logros_y_roles(canal, high, low, db):
 # ------------------- COMANDOS -------------------
 
 @tree.command(name='registrar', description='Registra tu cuenta de LoL (LAN) para el torneo')
-@app_commands.describe(nombre='Tu Riot ID completo, ej: Nombre#LAN1')
-async def registrar(interaction: discord.Interaction, nombre: str):
+@app_commands.describe(nombre='Tu Riot ID completo, ej: Nombre#LAN1',
+                        elo_previo='Opcional: tu elo mas alto alcanzado antes (ej. Master, Diamond). Ayuda a la directiva a clasificarte si tu cuenta es nueva.')
+async def registrar(interaction: discord.Interaction, nombre: str, elo_previo: str = ""):
     await interaction.response.defer()
     user_id = str(interaction.user.id)
     db = cargar_db()
@@ -335,18 +379,23 @@ async def registrar(interaction: discord.Interaction, nombre: str):
         'castigos_total': 0,
         'logros': [],
         'tiempo_voz_min': 0,
+        'elo_previo': elo_previo,
+        'escudos': 0,
+        'maldiciones': [],
+        'ultimo_escudo_uso': None,
     }
     if 'inicio_torneo' not in db:
         db['inicio_torneo'] = str(ahora)
     guardar_db(db)
 
     categoria_txt = "High Elo" if db[info["puuid"]]["elo"] == "high" else "Low Elo"
+    elo_previo_txt = f'\nElo previo declarado: **{elo_previo}** (la directiva lo vera al revisar tu cuenta).' if elo_previo else ''
     if estado == 'pendiente':
         await interaction.followup.send(
             f'{interaction.user.mention} registrado como **{info["nombre"]}** (LAN).\n'
             f'Tu cuenta tiene solo {total_partidas} partidas en soloQ, por lo que queda **pendiente de revision** '
             f'por la directiva antes de aparecer en la tabla (posible cuenta nueva/comprada).\n'
-            f'Categoria sugerida: {categoria_txt}.\n'
+            f'Categoria sugerida: {categoria_txt}.{elo_previo_txt}\n'
             f'Recuerda: ademas de la aprobacion, tus puntos solo son validos si te conectas al chat de voz del servidor (cualquier canal).'
         )
     else:
@@ -357,7 +406,6 @@ async def registrar(interaction: discord.Interaction, nombre: str):
             f'Importante: para que tus puntos sean validos debes conectarte al chat de voz del servidor (cualquier canal) mientras juegas.\n'
             f'A jugar! El torneo dura {DURACION_TORNEO} dias.'
         )
-
 
 
 @tree.command(name='progreso', description='Mira tu progreso actual')
@@ -429,8 +477,17 @@ async def perfil(interaction: discord.Interaction):
     embed.add_field(name='Castigos', value=f'-{objetivo["castigos"]}', inline=True)
     embed.add_field(name='Tiempo en voz', value=f'{objetivo["tiempo_voz_min"]} min', inline=True)
     embed.add_field(name='Total', value=f'**{objetivo["total"]} pts**', inline=True)
+    embed.add_field(name='Escudos Azules', value=str(objetivo.get('escudos', 0)), inline=True)
+    if objetivo.get('elo_previo'):
+        embed.add_field(name='Elo previo declarado', value=objetivo['elo_previo'], inline=True)
+    activas = maldiciones_activas_de(data)
+    malds_txt = '\n'.join(f'- {m["efecto"]}' for m in activas) or 'Ninguna'
+    embed.add_field(name=f'Maldiciones activas ({len(activas)}/{MALDICION_MAX_ACTIVAS})', value=malds_txt, inline=False)
     embed.add_field(name='Logros', value=logros_txt, inline=False)
     await interaction.followup.send(embed=embed)
+
+
+@tree.command(name='tabla', description='Clasificacion por categorias')
 async def tabla(interaction: discord.Interaction):
     await interaction.response.defer()
     await mostrar_tabla(interaction.channel)
@@ -486,25 +543,36 @@ async def ayuda(interaction: discord.Interaction):
                            description=calcular_estado_torneo(cargar_db()))
     embed.add_field(
         name='Jugadores',
-        value=('`/registrar` - Inscribete con tu Riot ID (Nombre#TAG)\n'
+        value=('`/registrar` - Inscribete con tu Riot ID (Nombre#TAG). Opcional: declara tu elo previo\n'
                '`/progreso` - Consulta tu propio avance de LP\n'
-               '`/perfil` - Tu tarjeta completa (posicion, logros, etc.)\n'
-               '`/tabla` - Muestra la clasificacion al instante'),
+               '`/perfil` - Tu tarjeta completa (posicion, logros, escudos, etc.)\n'
+               '`/tabla` - Muestra la clasificacion al instante\n'
+               '`/escudos` - Ve tus Escudos Azules y maldiciones activas\n'
+               '`/maldecir` - Gasta un Escudo Azul y maldice a otro jugador al azar'),
         inline=False
     )
     embed.add_field(
         name='Administracion',
         value=('`/bonus` - Otorga puntos extra a un jugador\n'
                '`/castigar` - Aplica una penalizacion\n'
+               '`/otorgar_escudo` - Da un Escudo Azul por una hazana (Primera Sangre, Penta, etc.)\n'
                '`/historial` - Revisa el historial de cambios de un jugador\n'
-               '`/pendientes` - Lista cuentas nuevas esperando revision\n'
+               '`/pendientes` - Lista cuentas nuevas esperando revision (con elo previo declarado)\n'
                '`/clasificar` - Aprueba y asigna categoria a una cuenta pendiente\n'
-               '`/iniciar_torneo` - Comienza oficialmente el torneo y reinicia el progreso de pruebas'),
+               '`/iniciar_torneo` - Comienza oficialmente el torneo y reinicia el progreso de pruebas\n'
+               '`/reiniciar_registro` - PELIGRO: borra todo para reiniciar con cuentas nuevas'),
         inline=False
     )
     embed.add_field(
         name='Regla de chat de voz',
         value=f'Tus puntos solo cuentan en la tabla si has estado conectado al chat de voz del servidor (cualquier canal) al menos {VOZ_MINIMA_MINUTOS} min acumulados.',
+        inline=False
+    )
+    embed.add_field(
+        name='Escudos Azules (maldiciones)',
+        value=(f'Se ganan al desbloquear logros o por hazanas dentro del juego (la directiva las otorga). '
+               f'Usa `/maldecir` para gastar uno y aplicar un efecto aleatorio a otro jugador (~1 de cada 3 rebota). '
+               f'Maximo {MALDICION_MAX_ACTIVAS} maldiciones activas por victima, cooldown de {MALDICION_COOLDOWN_HORAS}h por lanzador.'),
         inline=False
     )
     embed.add_field(
@@ -527,7 +595,8 @@ async def pendientes(interaction: discord.Interaction):
         return
     mensaje = '**Cuentas pendientes:**\n'
     for j in pend:
-        mensaje += f'- **{j["nombre"]}** - {j["tier_actual"]} {j["rank_actual"]} - <@{j["discord_id"]}>\n'
+        extra = f' - elo previo declarado: **{j["elo_previo"]}**' if j.get('elo_previo') else ''
+        mensaje += f'- **{j["nombre"]}** - {j["tier_actual"]} {j["rank_actual"]} - <@{j["discord_id"]}>{extra}\n'
     mensaje += '\nUsa `/clasificar usuario:@jugador categoria:low|high` para aprobar.'
     await interaction.followup.send(mensaje)
 
@@ -551,6 +620,127 @@ async def clasificar(interaction: discord.Interaction, usuario: discord.Member, 
                 f'**{data["nombre"]}** aprobado y clasificado en **{"High" if categoria.value == "high" else "Low"} Elo**. Ya aparece en la tabla (si cumple el requisito de voz).')
             return
     await interaction.followup.send('Usuario no encontrado en el torneo.')
+
+
+@tree.command(name='escudos', description='Consulta tus Escudos Azules y maldiciones activas')
+async def escudos(interaction: discord.Interaction):
+    await interaction.response.defer()
+    user_id = str(interaction.user.id)
+    db = cargar_db()
+    for puuid, data in jugadores_validos(db).items():
+        if data['discord_id'] == user_id:
+            activas = maldiciones_activas_de(data)
+            malds_txt = '\n'.join(f'- {m["efecto"]} (de <@{m["de"]}>)' for m in activas) or 'Ninguna'
+            restante_cd = tiempo_restante_cooldown(data)
+            cd_txt = 'Disponible' if restante_cd <= 0 else f'{round(restante_cd, 1)} h restantes'
+            await interaction.followup.send(
+                f'**{data["nombre"]}**\n'
+                f'Escudos Azules disponibles: **{data.get("escudos", 0)}**\n'
+                f'Cooldown para lanzar: {cd_txt}\n'
+                f'Maldiciones activas sobre ti ({len(activas)}/{MALDICION_MAX_ACTIVAS}):\n{malds_txt}'
+            )
+            return
+    await interaction.followup.send('No estas registrado.')
+
+
+@tree.command(name='maldecir', description='Gasta un Escudo Azul para lanzar una maldicion aleatoria a otro jugador')
+@app_commands.describe(usuario='Jugador objetivo')
+async def maldecir(interaction: discord.Interaction, usuario: discord.Member):
+    await interaction.response.defer()
+    caster_id = str(interaction.user.id)
+    target_id = str(usuario.id)
+    if caster_id == target_id:
+        await interaction.followup.send('No puedes maldecirte a ti mismo.')
+        return
+    db = cargar_db()
+    valid = jugadores_validos(db)
+    caster_puuid = caster_data = None
+    target_puuid = target_data = None
+    for puuid, data in valid.items():
+        if data['discord_id'] == caster_id:
+            caster_puuid, caster_data = puuid, data
+        if data['discord_id'] == target_id:
+            target_puuid, target_data = puuid, data
+
+    if caster_data is None:
+        await interaction.followup.send('No estas registrado en el torneo.')
+        return
+    if caster_data.get('estado') != 'aprobado':
+        await interaction.followup.send('Tu cuenta debe estar aprobada por la directiva para poder maldecir.')
+        return
+    if target_data is None or target_data.get('estado') != 'aprobado':
+        await interaction.followup.send('Ese jugador no esta registrado/aprobado en el torneo.')
+        return
+    if caster_data.get('escudos', 0) <= 0:
+        await interaction.followup.send('No tienes Escudos Azules disponibles. Ganalos desbloqueando logros o pidiendole uno a la directiva por una hazana.')
+        return
+    restante_cd = tiempo_restante_cooldown(caster_data)
+    if restante_cd > 0:
+        await interaction.followup.send(f'Debes esperar {round(restante_cd, 1)} horas mas para volver a lanzar una maldicion.')
+        return
+
+    efecto = random.choice(EFECTOS_MALDICION)
+    es_rebote_lanzador = efecto.startswith('COMODIN - Rebote:')
+    es_rebote_random = efecto.startswith('COMODIN - Rebote al azar')
+
+    destino_puuid, destino_data = target_puuid, target_data
+    if es_rebote_lanzador:
+        destino_puuid, destino_data = caster_puuid, caster_data
+    elif es_rebote_random:
+        candidatos = [(p, d) for p, d in valid.items() if d.get('estado') == 'aprobado' and d['discord_id'] != caster_id]
+        if candidatos:
+            destino_puuid, destino_data = random.choice(candidatos)
+
+    if len(maldiciones_activas_de(destino_data)) >= MALDICION_MAX_ACTIVAS:
+        await interaction.followup.send(
+            f'**{destino_data["nombre"]}** ya tiene el maximo de {MALDICION_MAX_ACTIVAS} maldiciones activas ahora mismo. '
+            f'Intenta con otro objetivo o espera a que expiren (dura {MALDICION_DURACION_HORAS}h).')
+        return
+
+    ahora = str(datetime.datetime.now())
+    caster_data['escudos'] = caster_data.get('escudos', 0) - 1
+    caster_data['ultimo_escudo_uso'] = ahora
+    destino_data.setdefault('maldiciones', []).append({'efecto': efecto, 'de': caster_id, 'fecha': ahora})
+    guardar_db(db)
+
+    embed = discord.Embed(title='Maldicion lanzada!', color=0x9b59b6, timestamp=datetime.datetime.now())
+    embed.add_field(name='Lanzada por', value=f'<@{caster_id}>', inline=True)
+    embed.add_field(name='Objetivo final', value=f'**{destino_data["nombre"]}**', inline=True)
+    embed.add_field(name='Efecto', value=efecto, inline=False)
+    embed.set_footer(text=f'Dura {MALDICION_DURACION_HORAS}h - Maximo {MALDICION_MAX_ACTIVAS} activas por jugador - Cooldown de lanzamiento: {MALDICION_COOLDOWN_HORAS}h')
+    await interaction.followup.send(embed=embed)
+
+
+@tree.command(name='otorgar_escudo', description='(Admin) Otorga un Escudo Azul por una hazana dentro del juego')
+@app_commands.describe(usuario='Jugador a premiar', motivo='ej. Primera Sangre, Penta Kill, Ace')
+@app_commands.default_permissions(administrator=True)
+async def otorgar_escudo(interaction: discord.Interaction, usuario: discord.Member, motivo: str = ""):
+    await interaction.response.defer()
+    db = cargar_db()
+    for puuid, data in jugadores_validos(db).items():
+        if data['discord_id'] == str(usuario.id):
+            data['escudos'] = data.get('escudos', 0) + 1
+            guardar_db(db)
+            await interaction.followup.send(
+                f'**{data["nombre"]}** recibio un Escudo Azul. Motivo: {motivo or "N/A"}. Total: {data["escudos"]}.')
+            return
+    await interaction.followup.send('Usuario no encontrado en el torneo.')
+
+
+@tree.command(name='reiniciar_registro', description='(Admin) PELIGRO: borra TODOS los registros para empezar con cuentas nuevas')
+@app_commands.describe(confirmar='Escribe SI (mayusculas) para confirmar el borrado total')
+@app_commands.default_permissions(administrator=True)
+async def reiniciar_registro(interaction: discord.Interaction, confirmar: str):
+    await interaction.response.defer()
+    if confirmar != 'SI':
+        await interaction.followup.send(
+            'Accion cancelada. Escribe `confirmar: SI` (en mayusculas) para confirmar el borrado total de TODOS los jugadores registrados '
+            '(incluye LP, bonus, castigos, logros, escudos y tiempo de voz acumulado). Usa esto solo cuando pasen a las cuentas nuevas.')
+        return
+    guardar_db({})
+    await interaction.followup.send(
+        'Se borraron todos los registros. Todos deben usar `/registrar` de nuevo con sus cuentas nuevas '
+        '(pueden usar `elo_previo` para que la directiva sepa su nivel real al revisar).')
 
 
 @tree.command(name='iniciar_torneo', description='(Admin) Inicia oficialmente el torneo y reinicia el progreso de pruebas')
@@ -762,7 +952,7 @@ PAGINA_HTML = """
     <h2>High Elo</h2>
     {% if high %}
     <table>
-      <tr><th>#</th><th>Jugador</th><th>Rango actual</th><th>LP ganados</th><th>Bonus</th><th>Castigos</th><th>Voz</th><th>Total</th></tr>
+      <tr><th>#</th><th>Jugador</th><th>Rango actual</th><th>LP ganados</th><th>Bonus</th><th>Castigos</th><th>Voz</th><th>Escudos</th><th>Total</th></tr>
       {% for j in high %}
       <tr>
         <td class="{{ 'pos1' if loop.index==1 else ('pos2' if loop.index==2 else ('pos3' if loop.index==3 else '')) }}">{{ loop.index }}</td>
@@ -772,6 +962,7 @@ PAGINA_HTML = """
         <td>+{{ j.bonus }}</td>
         <td>-{{ j.castigos }}</td>
         <td class="voz-ok">{{ j.tiempo_voz_min }} min</td>
+        <td>{{ j.escudos }}</td>
         <td><b>{{ j.total }}</b></td>
       </tr>
       {% endfor %}
@@ -784,7 +975,7 @@ PAGINA_HTML = """
     <h2>Low Elo</h2>
     {% if low %}
     <table>
-      <tr><th>#</th><th>Jugador</th><th>Rango actual</th><th>LP ganados</th><th>Bonus</th><th>Castigos</th><th>Voz</th><th>Total</th></tr>
+      <tr><th>#</th><th>Jugador</th><th>Rango actual</th><th>LP ganados</th><th>Bonus</th><th>Castigos</th><th>Voz</th><th>Escudos</th><th>Total</th></tr>
       {% for j in low %}
       <tr>
         <td class="{{ 'pos1' if loop.index==1 else ('pos2' if loop.index==2 else ('pos3' if loop.index==3 else '')) }}">{{ loop.index }}</td>
@@ -794,6 +985,7 @@ PAGINA_HTML = """
         <td>+{{ j.bonus }}</td>
         <td>-{{ j.castigos }}</td>
         <td class="voz-ok">{{ j.tiempo_voz_min }} min</td>
+        <td>{{ j.escudos }}</td>
         <td><b>{{ j.total }}</b></td>
       </tr>
       {% endfor %}
