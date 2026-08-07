@@ -14,10 +14,13 @@ RIOT_API_KEY = os.environ.get('RIOT_API_KEY')
 CANAL_CLASIFICACION_ID = int(os.environ.get('CANAL_CLASIFICACION_ID', '0'))
 DURACION_TORNEO = int(os.environ.get('DURACION_TORNEO', '30'))
 JUEGOS_MINIMOS_CUENTA = int(os.environ.get('JUEGOS_MINIMOS_CUENTA', '15'))
+VOZ_MINIMA_MINUTOS = float(os.environ.get('VOZ_MINIMA_MINUTOS', '1'))
+FECHA_INICIO_TORNEO = os.environ.get('FECHA_INICIO_TORNEO', '2026-08-14T00:00:00')
 # =================================================
 
 intents = discord.Intents.default()
 intents.message_content = True
+intents.voice_states = True
 client = discord.Client(intents=intents)
 tree = app_commands.CommandTree(client)
 
@@ -45,6 +48,9 @@ LOGROS = {
     'top1':    {'nombre': 'Cima',    'desc': 'Llego al puesto #1 de su categoria'},
     'top3':    {'nombre': 'Podio',   'desc': 'Entro al top 3 de su categoria'},
 }
+
+# Sesiones de voz activas en memoria: {discord_id: datetime_de_ultimo_checkpoint}
+VOICE_SESIONES = {}
 
 
 # ------------------- PERSISTENCIA -------------------
@@ -76,7 +82,30 @@ def guardar_registros(registros):
 
 
 def jugadores_validos(db):
-    return {k: v for k, v in db.items() if k != 'inicio_torneo' and isinstance(v, dict)}
+    return {k: v for k, v in db.items() if k not in ('inicio_torneo', 'torneo_iniciado') and isinstance(v, dict)}
+
+
+# ------------------- VOZ -------------------
+
+def flush_voice_time(discord_id):
+    """Suma el tiempo transcurrido desde el ultimo checkpoint al total del jugador y reinicia el checkpoint."""
+    inicio = VOICE_SESIONES.get(discord_id)
+    if inicio is None:
+        return
+    ahora = datetime.datetime.now()
+    minutos = (ahora - inicio).total_seconds() / 60
+    VOICE_SESIONES[discord_id] = ahora
+    if minutos <= 0:
+        return
+    db = cargar_db()
+    cambiado = False
+    for puuid, data in jugadores_validos(db).items():
+        if data['discord_id'] == discord_id:
+            data['tiempo_voz_min'] = data.get('tiempo_voz_min', 0) + minutos
+            cambiado = True
+            break
+    if cambiado:
+        guardar_db(db)
 
 
 
@@ -132,18 +161,40 @@ def tier_index(tier):
         return -1
 
 
+# ------------------- ESTADO DEL TORNEO -------------------
+
+def calcular_estado_torneo(db):
+    ahora = datetime.datetime.now()
+    try:
+        fecha_inicio_oficial = datetime.datetime.fromisoformat(FECHA_INICIO_TORNEO)
+    except Exception:
+        fecha_inicio_oficial = ahora
+    if db.get('torneo_iniciado'):
+        try:
+            inicio = datetime.datetime.fromisoformat(db.get('inicio_torneo'))
+        except Exception:
+            inicio = ahora
+        fin = inicio + datetime.timedelta(days=DURACION_TORNEO)
+        dias_restantes = max((fin - ahora).days, 0)
+        return f'Torneo en curso - quedan {dias_restantes} dias para el cierre'
+    if ahora < fecha_inicio_oficial:
+        dias = (fecha_inicio_oficial - ahora).days
+        return f'Periodo de pruebas - inicio oficial en {dias} dias ({fecha_inicio_oficial.strftime("%d/%m/%Y")})'
+    return 'Esperando que la directiva use /iniciar_torneo para comenzar oficialmente'
+
 
 # ------------------- CALCULO DE TABLA -------------------
 
 def calcular_tabla(db):
-    """Devuelve (high, low, pendientes) con los datos ya frescos de Riot."""
-    high, low, pendientes = [], [], []
+    """Devuelve (high, low, pendientes, sin_voz) con los datos ya frescos de Riot."""
+    high, low, pendientes, sin_voz = [], [], [], []
     for puuid, data in jugadores_validos(db).items():
         info = obtener_info_ranked(data['nombre'], data['region'])
         if info is None:
             continue
         lp_ganados = info['lp'] - data['lp_inicial']
         total = lp_ganados + data.get('bonus_total', 0) - data.get('castigos_total', 0)
+        tiempo_voz = round(data.get('tiempo_voz_min', 0), 1)
         jugador = {
             'puuid': puuid,
             'discord_id': data['discord_id'],
@@ -158,16 +209,21 @@ def calcular_tabla(db):
             'castigos': data.get('castigos_total', 0),
             'total': total,
             'estado': data.get('estado', 'aprobado'),
+            'tiempo_voz_min': tiempo_voz,
+            'voz_verificado': tiempo_voz >= VOZ_MINIMA_MINUTOS,
         }
         if jugador['estado'] == 'pendiente':
             pendientes.append(jugador)
+        elif not jugador['voz_verificado']:
+            sin_voz.append(jugador)
         elif jugador['elo'] == 'high':
             high.append(jugador)
         else:
             low.append(jugador)
     high.sort(key=lambda x: x['total'], reverse=True)
     low.sort(key=lambda x: x['total'], reverse=True)
-    return high, low, pendientes
+    return high, low, pendientes, sin_voz
+
 
 
 # ------------------- LOGROS Y ROLES -------------------
@@ -208,7 +264,7 @@ async def procesar_logros_y_roles(canal, high, low, db):
 
     if anuncios and canal:
         try:
-            texto = '**Nuevos logros desbloqueados**\n' + '\n'.join(anuncios[:10])
+            texto = '**Nuevos logros desbloqueados (automatico)**\n' + '\n'.join(anuncios[:10])
             await canal.send(texto)
         except Exception:
             pass
@@ -278,6 +334,7 @@ async def registrar(interaction: discord.Interaction, nombre: str):
         'bonus_total': 0,
         'castigos_total': 0,
         'logros': [],
+        'tiempo_voz_min': 0,
     }
     if 'inicio_torneo' not in db:
         db['inicio_torneo'] = str(ahora)
@@ -289,21 +346,25 @@ async def registrar(interaction: discord.Interaction, nombre: str):
             f'{interaction.user.mention} registrado como **{info["nombre"]}** (LAN).\n'
             f'Tu cuenta tiene solo {total_partidas} partidas en soloQ, por lo que queda **pendiente de revision** '
             f'por la directiva antes de aparecer en la tabla (posible cuenta nueva/comprada).\n'
-            f'Categoria sugerida: {categoria_txt}.'
+            f'Categoria sugerida: {categoria_txt}.\n'
+            f'Recuerda: ademas de la aprobacion, tus puntos solo son validos si te conectas al chat de voz del servidor (cualquier canal).'
         )
     else:
         await interaction.followup.send(
             f'{interaction.user.mention} registrado como **{info["nombre"]}** (LAN).\n'
             f'LP inicial: {info["lp"]} ({info["tier"]} {info["rank"]}).\n'
             f'Categoria: {categoria_txt}.\n'
+            f'Importante: para que tus puntos sean validos debes conectarte al chat de voz del servidor (cualquier canal) mientras juegas.\n'
             f'A jugar! El torneo dura {DURACION_TORNEO} dias.'
         )
+
 
 
 @tree.command(name='progreso', description='Mira tu progreso actual')
 async def progreso(interaction: discord.Interaction):
     await interaction.response.defer()
     user_id = str(interaction.user.id)
+    flush_voice_time(user_id)
     db = cargar_db()
     for puuid, data in jugadores_validos(db).items():
         if data['discord_id'] == user_id:
@@ -314,12 +375,15 @@ async def progreso(interaction: discord.Interaction):
             lp_ganados = info['lp'] - data['lp_inicial']
             total = lp_ganados + data.get('bonus_total', 0) - data.get('castigos_total', 0)
             estado_txt = 'Pendiente de revision' if data.get('estado') == 'pendiente' else 'Aprobado'
+            tiempo_voz = round(data.get('tiempo_voz_min', 0), 1)
+            voz_txt = f'{tiempo_voz} min (verificado)' if tiempo_voz >= VOZ_MINIMA_MINUTOS else f'{tiempo_voz} min (necesitas {round(VOZ_MINIMA_MINUTOS - tiempo_voz, 1)} min mas conectado a voz para que tus puntos cuenten)'
             await interaction.followup.send(
                 f'**{data["nombre"]}** ({estado_txt})\n'
                 f'LP inicial: {data["lp_inicial"]} ({data["tier_inicial"]} {data["rank_inicial"]})\n'
                 f'LP actual: {info["lp"]} ({info["tier"]} {info["rank"]})\n'
                 f'LP ganados: {lp_ganados}\n'
                 f'Bonus: +{data.get("bonus_total", 0)} | Castigos: -{data.get("castigos_total", 0)}\n'
+                f'Tiempo en chat de voz: {voz_txt}\n'
                 f'**Total: {total} puntos**'
             )
             return
@@ -330,11 +394,12 @@ async def progreso(interaction: discord.Interaction):
 async def perfil(interaction: discord.Interaction):
     await interaction.response.defer()
     user_id = str(interaction.user.id)
+    flush_voice_time(user_id)
     db = cargar_db()
-    high, low, pendientes = calcular_tabla(db)
+    high, low, pendientes, sin_voz = calcular_tabla(db)
 
     objetivo = None
-    for j in high + low + pendientes:
+    for j in high + low + pendientes + sin_voz:
         if j['discord_id'] == user_id:
             objetivo = j
             break
@@ -343,7 +408,10 @@ async def perfil(interaction: discord.Interaction):
         return
 
     if objetivo['estado'] == 'pendiente':
-        posicion_txt = 'En revision (no aparece en la tabla aun)'
+        posicion_txt = 'En revision por la directiva (no aparece en la tabla aun)'
+    elif not objetivo['voz_verificado']:
+        faltante = round(VOZ_MINIMA_MINUTOS - objetivo['tiempo_voz_min'], 1)
+        posicion_txt = f'Sin verificar - conectate al chat de voz {faltante} min mas para entrar a la tabla'
     else:
         lista = high if objetivo['elo'] == 'high' else low
         posicion = next((i for i, j in enumerate(lista, 1) if j['puuid'] == objetivo['puuid']), None)
@@ -359,13 +427,10 @@ async def perfil(interaction: discord.Interaction):
     embed.add_field(name='LP ganados', value=str(objetivo['lp_ganados']), inline=True)
     embed.add_field(name='Bonus', value=f'+{objetivo["bonus"]}', inline=True)
     embed.add_field(name='Castigos', value=f'-{objetivo["castigos"]}', inline=True)
+    embed.add_field(name='Tiempo en voz', value=f'{objetivo["tiempo_voz_min"]} min', inline=True)
     embed.add_field(name='Total', value=f'**{objetivo["total"]} pts**', inline=True)
     embed.add_field(name='Logros', value=logros_txt, inline=False)
     await interaction.followup.send(embed=embed)
-
-
-
-@tree.command(name='tabla', description='Clasificacion por categorias')
 async def tabla(interaction: discord.Interaction):
     await interaction.response.defer()
     await mostrar_tabla(interaction.channel)
@@ -377,9 +442,9 @@ async def mostrar_tabla(canal):
     if not jugadores_validos(db):
         await canal.send('No hay jugadores registrados.')
         return
-    high, low, pendientes = calcular_tabla(db)
+    high, low, pendientes, sin_voz = calcular_tabla(db)
 
-    embed = discord.Embed(title='Clasificacion del Torneo (30 dias)', color=0x00ff00,
+    embed = discord.Embed(title='Clasificacion del Torneo SoloQ Challenge', color=0x00ff00,
                           timestamp=datetime.datetime.now())
     if high:
         embed.add_field(name='High Elo (Master, GM, Challenger)', value='​', inline=False)
@@ -388,7 +453,7 @@ async def mostrar_tabla(canal):
             mention = user.mention if user else j['nombre']
             embed.add_field(
                 name=f'{i}. {j["nombre"]}',
-                value=f'{mention} -> {j["total"]} pts (LP: {j["lp_ganados"]}, Bonus: +{j["bonus"]}, Castigos: -{j["castigos"]})',
+                value=f'{mention} -> {j["total"]} pts (LP: {j["lp_ganados"]}, Bonus: +{j["bonus"]}, Castigos: -{j["castigos"]}, Voz: {j["tiempo_voz_min"]} min)',
                 inline=False
             )
     if low:
@@ -398,14 +463,19 @@ async def mostrar_tabla(canal):
             mention = user.mention if user else j['nombre']
             embed.add_field(
                 name=f'{i}. {j["nombre"]}',
-                value=f'{mention} -> {j["total"]} pts (LP: {j["lp_ganados"]}, Bonus: +{j["bonus"]}, Castigos: -{j["castigos"]})',
+                value=f'{mention} -> {j["total"]} pts (LP: {j["lp_ganados"]}, Bonus: +{j["bonus"]}, Castigos: -{j["castigos"]}, Voz: {j["tiempo_voz_min"]} min)',
                 inline=False
             )
+    if sin_voz:
+        embed.add_field(name='Sin verificar (falta chat de voz)', value='​', inline=False)
+        for j in sin_voz:
+            faltante = round(VOZ_MINIMA_MINUTOS - j['tiempo_voz_min'], 1)
+            embed.add_field(name=j['nombre'], value=f'Conectado {j["tiempo_voz_min"]} min - le faltan {faltante} min en voz', inline=False)
     if pendientes:
-        embed.add_field(name='Pendientes de revision', value='​', inline=False)
+        embed.add_field(name='Pendientes de revision (cuenta nueva)', value='​', inline=False)
         for j in pendientes:
             embed.add_field(name=j['nombre'], value='Esperando aprobacion de la directiva (`/clasificar`)', inline=False)
-    embed.set_footer(text=f'Torneo de {DURACION_TORNEO} dias - Se actualiza cada 30 min - Web: ver enlace fijado')
+    embed.set_footer(text=f'{calcular_estado_torneo(db)} - Web: ver enlace fijado')
     await canal.send(embed=embed)
     await procesar_logros_y_roles(canal, high, low, db)
 
@@ -413,7 +483,7 @@ async def mostrar_tabla(canal):
 @tree.command(name='ayuda', description='Muestra todos los comandos disponibles')
 async def ayuda(interaction: discord.Interaction):
     embed = discord.Embed(title='SoloQ Challenge - Comandos', color=0x5865F2,
-                           description='Torneo de ganancia de LP de 30 dias.')
+                           description=calcular_estado_torneo(cargar_db()))
     embed.add_field(
         name='Jugadores',
         value=('`/registrar` - Inscribete con tu Riot ID (Nombre#TAG)\n'
@@ -428,7 +498,13 @@ async def ayuda(interaction: discord.Interaction):
                '`/castigar` - Aplica una penalizacion\n'
                '`/historial` - Revisa el historial de cambios de un jugador\n'
                '`/pendientes` - Lista cuentas nuevas esperando revision\n'
-               '`/clasificar` - Aprueba y asigna categoria a una cuenta pendiente'),
+               '`/clasificar` - Aprueba y asigna categoria a una cuenta pendiente\n'
+               '`/iniciar_torneo` - Comienza oficialmente el torneo y reinicia el progreso de pruebas'),
+        inline=False
+    )
+    embed.add_field(
+        name='Regla de chat de voz',
+        value=f'Tus puntos solo cuentan en la tabla si has estado conectado al chat de voz del servidor (cualquier canal) al menos {VOZ_MINIMA_MINUTOS} min acumulados.',
         inline=False
     )
     embed.add_field(
@@ -440,13 +516,12 @@ async def ayuda(interaction: discord.Interaction):
     await interaction.response.send_message(embed=embed)
 
 
-
 @tree.command(name='pendientes', description='(Admin) Lista cuentas pendientes de revision')
 @app_commands.default_permissions(administrator=True)
 async def pendientes(interaction: discord.Interaction):
     await interaction.response.defer()
     db = cargar_db()
-    _, _, pend = calcular_tabla(db)
+    _, _, pend, _ = calcular_tabla(db)
     if not pend:
         await interaction.followup.send('No hay cuentas pendientes de revision.')
         return
@@ -473,9 +548,42 @@ async def clasificar(interaction: discord.Interaction, usuario: discord.Member, 
             data['elo'] = categoria.value
             guardar_db(db)
             await interaction.followup.send(
-                f'**{data["nombre"]}** aprobado y clasificado en **{"High" if categoria.value == "high" else "Low"} Elo**. Ya aparece en la tabla.')
+                f'**{data["nombre"]}** aprobado y clasificado en **{"High" if categoria.value == "high" else "Low"} Elo**. Ya aparece en la tabla (si cumple el requisito de voz).')
             return
     await interaction.followup.send('Usuario no encontrado en el torneo.')
+
+
+@tree.command(name='iniciar_torneo', description='(Admin) Inicia oficialmente el torneo y reinicia el progreso de pruebas')
+@app_commands.default_permissions(administrator=True)
+async def iniciar_torneo(interaction: discord.Interaction):
+    await interaction.response.defer()
+    db = cargar_db()
+    ahora = datetime.datetime.now()
+    contador = 0
+    for puuid, data in jugadores_validos(db).items():
+        if data.get('estado') != 'aprobado':
+            continue
+        info = obtener_info_ranked(data['nombre'], data['region'])
+        if info is None:
+            continue
+        data['lp_inicial'] = info['lp']
+        data['tier_inicial'] = info['tier']
+        data['rank_inicial'] = info['rank']
+        data['bonus_total'] = 0
+        data['castigos_total'] = 0
+        data['logros'] = []
+        contador += 1
+    db['inicio_torneo'] = str(ahora)
+    db['torneo_iniciado'] = True
+    guardar_db(db)
+    await interaction.followup.send(
+        f'Torneo iniciado oficialmente. Se reinicio el progreso de {contador} jugadores aprobados '
+        f'(el conteo de LP arranca desde ahora, el tiempo de voz acumulado se conserva). Dura {DURACION_TORNEO} dias.')
+    if CANAL_CLASIFICACION_ID != 0:
+        canal = client.get_channel(CANAL_CLASIFICACION_ID)
+        if canal:
+            await canal.send('**EL TORNEO HA COMENZADO OFICIALMENTE!** Buena suerte a todos.')
+            await mostrar_tabla(canal)
 
 
 @tree.command(name='castigar', description='(Admin) Resta puntos a un jugador')
@@ -532,7 +640,6 @@ async def bonus(interaction: discord.Interaction, usuario: discord.Member, punto
     await interaction.followup.send('Usuario no encontrado en el torneo.')
 
 
-
 @tree.command(name='historial', description='(Admin) Ver historial de bonus y castigos')
 @app_commands.describe(usuario='Jugador')
 @app_commands.default_permissions(administrator=True)
@@ -550,7 +657,7 @@ async def historial(interaction: discord.Interaction, usuario: discord.Member):
     await interaction.followup.send(mensaje)
 
 
-# ------------------- TAREA AUTOMATICA -------------------
+# ------------------- TAREAS AUTOMATICAS -------------------
 
 @tasks.loop(minutes=30)
 async def actualizar_canal():
@@ -563,13 +670,40 @@ async def actualizar_canal():
     await mostrar_tabla(canal)
 
 
+@tasks.loop(minutes=5)
+async def voice_checkpoint():
+    for discord_id in list(VOICE_SESIONES.keys()):
+        flush_voice_time(discord_id)
+
+
+@client.event
+async def on_voice_state_update(member, before, after):
+    if member.bot:
+        return
+    discord_id = str(member.id)
+    estaba_conectado = before.channel is not None
+    esta_conectado = after.channel is not None
+    if not estaba_conectado and esta_conectado:
+        VOICE_SESIONES[discord_id] = datetime.datetime.now()
+    elif estaba_conectado and not esta_conectado:
+        flush_voice_time(discord_id)
+        VOICE_SESIONES.pop(discord_id, None)
+
+
 @client.event
 async def on_ready():
     print(f'Bot conectado como {client.user}')
     await tree.sync()
+    ahora = datetime.datetime.now()
+    for guild in client.guilds:
+        for vc in guild.voice_channels:
+            for m in vc.members:
+                if not m.bot:
+                    VOICE_SESIONES[str(m.id)] = ahora
     if not actualizar_canal.is_running():
         actualizar_canal.start()
-
+    if not voice_checkpoint.is_running():
+        voice_checkpoint.start()
 
 
 # ------------------- SITIO WEB (gratis, mismo servicio) -------------------
@@ -584,10 +718,16 @@ PAGINA_HTML = """
 <meta http-equiv="refresh" content="60">
 <title>SoloQ Challenge</title>
 <style>
-  body { background:#0f1117; color:#e8e8e8; font-family: 'Segoe UI', Arial, sans-serif; margin:0; padding:0 0 60px; }
-  header { background:linear-gradient(135deg,#1f2937,#111827); padding:40px 20px; text-align:center; border-bottom:3px solid #f5c518; }
-  header h1 { margin:0; font-size:2.4em; color:#f5c518; letter-spacing:1px; }
+  * { box-sizing: border-box; }
+  body { background:#0b0d12; color:#e8e8e8; font-family: 'Segoe UI', Arial, sans-serif; margin:0; padding:0 0 60px; }
+  header { background:radial-gradient(circle at top, #1a2233, #0b0d12); padding:50px 20px 30px; text-align:center; border-bottom:3px solid #f5c518; }
+  header h1 { margin:0; font-size:2.8em; color:#f5c518; letter-spacing:1px; text-shadow:0 0 20px rgba(245,197,24,0.4); }
   header p { color:#9ca3af; margin-top:8px; }
+  .estado { display:inline-block; margin-top:16px; padding:8px 18px; background:#1f2937; border:1px solid #f5c518; border-radius:20px; color:#f5c518; font-weight:bold; font-size:0.9em; }
+  .stats { display:flex; justify-content:center; gap:16px; margin-top:24px; flex-wrap:wrap; }
+  .stat-card { background:#161b22; border-radius:10px; padding:14px 22px; min-width:120px; text-align:center; border:1px solid #2a2f3a; }
+  .stat-card .num { font-size:1.6em; color:#f5c518; font-weight:bold; }
+  .stat-card .label { font-size:0.75em; color:#9ca3af; text-transform:uppercase; letter-spacing:1px; }
   .contenedor { max-width:1000px; margin:30px auto; padding:0 20px; }
   .categoria { margin-bottom:40px; }
   .categoria h2 { border-left:5px solid #f5c518; padding-left:12px; font-size:1.4em; }
@@ -598,21 +738,31 @@ PAGINA_HTML = """
   .pos1 { color:#f5c518; font-weight:bold; }
   .pos2 { color:#c0c0c0; font-weight:bold; }
   .pos3 { color:#cd7f32; font-weight:bold; }
+  .voz-ok { color:#3ba55d; }
+  .voz-no { color:#ed4245; }
   .vacio { color:#6b7280; padding:20px; text-align:center; }
+  .aviso { background:#1f2937; border-left:4px solid #f5c518; padding:14px 18px; border-radius:6px; margin-bottom:20px; color:#d1d5db; }
   footer { text-align:center; color:#6b7280; margin-top:40px; font-size:0.85em; }
 </style>
 </head>
 <body>
 <header>
   <h1>SoloQ Challenge</h1>
-  <p>Torneo de ganancia de LP - {{ duracion }} dias - Se actualiza automaticamente</p>
+  <p>Torneo de ganancia de LP - {{ duracion }} dias</p>
+  <div class="estado">{{ estado_torneo }}</div>
+  <div class="stats">
+    <div class="stat-card"><div class="num">{{ high|length + low|length }}</div><div class="label">Jugadores activos</div></div>
+    <div class="stat-card"><div class="num">{{ pendientes|length }}</div><div class="label">Pendientes de revision</div></div>
+    <div class="stat-card"><div class="num">{{ sin_voz|length }}</div><div class="label">Sin verificar voz</div></div>
+  </div>
 </header>
 <div class="contenedor">
+  <div class="aviso">Para que tus puntos sean validos debes conectarte al chat de voz del servidor de Discord (cualquier canal) mientras juegas tus partidas.</div>
   <div class="categoria">
     <h2>High Elo</h2>
     {% if high %}
     <table>
-      <tr><th>#</th><th>Jugador</th><th>Rango actual</th><th>LP ganados</th><th>Bonus</th><th>Castigos</th><th>Total</th></tr>
+      <tr><th>#</th><th>Jugador</th><th>Rango actual</th><th>LP ganados</th><th>Bonus</th><th>Castigos</th><th>Voz</th><th>Total</th></tr>
       {% for j in high %}
       <tr>
         <td class="{{ 'pos1' if loop.index==1 else ('pos2' if loop.index==2 else ('pos3' if loop.index==3 else '')) }}">{{ loop.index }}</td>
@@ -621,6 +771,7 @@ PAGINA_HTML = """
         <td>{{ j.lp_ganados }}</td>
         <td>+{{ j.bonus }}</td>
         <td>-{{ j.castigos }}</td>
+        <td class="voz-ok">{{ j.tiempo_voz_min }} min</td>
         <td><b>{{ j.total }}</b></td>
       </tr>
       {% endfor %}
@@ -633,7 +784,7 @@ PAGINA_HTML = """
     <h2>Low Elo</h2>
     {% if low %}
     <table>
-      <tr><th>#</th><th>Jugador</th><th>Rango actual</th><th>LP ganados</th><th>Bonus</th><th>Castigos</th><th>Total</th></tr>
+      <tr><th>#</th><th>Jugador</th><th>Rango actual</th><th>LP ganados</th><th>Bonus</th><th>Castigos</th><th>Voz</th><th>Total</th></tr>
       {% for j in low %}
       <tr>
         <td class="{{ 'pos1' if loop.index==1 else ('pos2' if loop.index==2 else ('pos3' if loop.index==3 else '')) }}">{{ loop.index }}</td>
@@ -642,6 +793,7 @@ PAGINA_HTML = """
         <td>{{ j.lp_ganados }}</td>
         <td>+{{ j.bonus }}</td>
         <td>-{{ j.castigos }}</td>
+        <td class="voz-ok">{{ j.tiempo_voz_min }} min</td>
         <td><b>{{ j.total }}</b></td>
       </tr>
       {% endfor %}
@@ -650,6 +802,17 @@ PAGINA_HTML = """
     <p class="vacio">Aun no hay jugadores en esta categoria.</p>
     {% endif %}
   </div>
+  {% if sin_voz %}
+  <div class="categoria">
+    <h2>Sin verificar (falta chat de voz)</h2>
+    <table>
+      <tr><th>Jugador</th><th>Tiempo en voz</th></tr>
+      {% for j in sin_voz %}
+      <tr><td>{{ j.nombre }}</td><td class="voz-no">{{ j.tiempo_voz_min }} min</td></tr>
+      {% endfor %}
+    </table>
+  </div>
+  {% endif %}
 </div>
 <footer>Actualizado automaticamente - Pagina se refresca cada 60 segundos</footer>
 </body>
@@ -660,15 +823,17 @@ PAGINA_HTML = """
 @app.route('/')
 def home():
     db = cargar_db()
-    high, low, _ = calcular_tabla(db)
-    return render_template_string(PAGINA_HTML, high=high, low=low, duracion=DURACION_TORNEO)
+    high, low, pendientes, sin_voz = calcular_tabla(db)
+    return render_template_string(PAGINA_HTML, high=high, low=low, pendientes=pendientes, sin_voz=sin_voz,
+                                   duracion=DURACION_TORNEO, estado_torneo=calcular_estado_torneo(db))
 
 
 @app.route('/api/tabla')
 def api_tabla():
     db = cargar_db()
-    high, low, pendientes = calcular_tabla(db)
-    return jsonify({'high': high, 'low': low, 'pendientes': pendientes})
+    high, low, pendientes, sin_voz = calcular_tabla(db)
+    return jsonify({'high': high, 'low': low, 'pendientes': pendientes, 'sin_voz': sin_voz,
+                     'estado_torneo': calcular_estado_torneo(db)})
 
 
 Thread(target=lambda: app.run(host='0.0.0.0', port=10000), daemon=True).start()
