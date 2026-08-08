@@ -2,3 +2,5 @@ discord.py==2.3.2
 requests
 flask
 audioop-lts
+gspread==6.1.2
+google-auth==2.29.0
