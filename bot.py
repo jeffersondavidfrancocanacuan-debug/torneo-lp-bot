@@ -147,7 +147,9 @@ def cargar_db():
                 'bonus_total': int(float(f.get('bonus_total') or 0)),
                 'castigos_total': int(float(f.get('castigos_total') or 0)),
                 'logros': logros,
-                'tiempo_voz_min': float(f.get('tiempo_voz_min') or 0),                'elo_previo': f.get('elo_previo', ''),
+                'tiempo_voz_min': float(f.get('tiempo_voz_min') or 0),
+
+                                  'elo_previo': f.get('elo_previo', ''),
                 'escudos': int(float(f.get('escudos') or 0)),
                 'maldiciones': maldiciones,
                 'ultimo_escudo_uso': f.get('ultimo_escudo_uso', ''),
@@ -296,7 +298,9 @@ def obtener_info_ranked(riot_id, region):
     url2 = f'https://{plataforma}.api.riotgames.com/lol/league/v4/entries/by-puuid/{puuid}'
     r2 = requests.get(url2, headers=headers)
     if r2.status_code != 200:
-        return None    for entry in r2.json():
+        return None
+
+    for entry in r2.json():
         if entry['queueType'] == 'RANKED_SOLO_5x5':
             return {
                 'puuid': puuid, 'tier': entry['tier'], 'rank': entry['rank'],
@@ -445,7 +449,9 @@ async def procesar_logros_y_roles(canal, high, low, db):
                                                    reason='Rol automatico de lider SoloQ Challenge')
                 if not lista:
                     continue
-                lider_id = int(lista[0]['discord_id'])                for miembro in list(rol.members):
+                lider_id = int(lista[0]['discord_id'])
+
+                for miembro in list(rol.members):
                     if miembro.id != lider_id:
                         try:
                             await miembro.remove_roles(rol, reason='Ya no es lider')
@@ -594,7 +600,9 @@ async def perfil(interaction: discord.Interaction):
     embed.add_field(name='Categoria', value='High Elo' if objetivo['elo'] == 'high' else 'Low Elo', inline=True)
     embed.add_field(name='Posicion', value=posicion_txt, inline=True)
     embed.add_field(name='Rango actual', value=f'{objetivo["tier_actual"]} {objetivo["rank_actual"]}', inline=True)
-    embed.add_field(name='LP ganados', value=str(objetivo['lp_ganados']), inline=True)    embed.add_field(name='Bonus', value=f'+{objetivo["bonus"]}', inline=True)
+    embed.add_field(name='LP ganados', value=str(objetivo['lp_ganados']), inline=True)
+
+    embed.add_field(name='Bonus', value=f'+{objetivo["bonus"]}', inline=True)
     embed.add_field(name='Castigos', value=f'-{objetivo["castigos"]}', inline=True)
     embed.add_field(name='Tiempo en voz', value=f'{objetivo["tiempo_voz_min"]} min', inline=True)
     embed.add_field(name='Total', value=f'**{objetivo["total"]} pts**', inline=True)
@@ -743,7 +751,9 @@ async def clasificar(interaction: discord.Interaction, usuario: discord.Member, 
     await interaction.followup.send('Usuario no encontrado en el torneo.')
 
 
-@tree.command(name='escudos', description='Consulta tus Escudos Azules y maldiciones activas')async def escudos(interaction: discord.Interaction):
+@tree.command(name='escudos', description='Consulta tus Escudos Azules y maldiciones activas')
+
+async def escudos(interaction: discord.Interaction):
     await interaction.response.defer()
     user_id = str(interaction.user.id)
     db = cargar_db()
@@ -892,7 +902,9 @@ async def iniciar_torneo(interaction: discord.Interaction):
     if CANAL_CLASIFICACION_ID != 0:
         canal = client.get_channel(CANAL_CLASIFICACION_ID)
         if canal:
-            await canal.send('**EL TORNEO HA COMENZADO OFICIALMENTE!** Buena suerte a todos.')            await mostrar_tabla(canal)
+            await canal.send('**EL TORNEO HA COMENZADO OFICIALMENTE!** Buena suerte a todos.')
+
+            await mostrar_tabla(canal)
 
 
 @tree.command(name='castigar', description='(Admin) Resta puntos a un jugador')
@@ -1041,7 +1053,9 @@ PAGINA_HTML = """
   .categoria { margin-bottom:40px; }
   .categoria h2 { border-left:5px solid #f5c518; padding-left:12px; font-size:1.4em; }
   table { width:100%; border-collapse:collapse; background:#161b22; border-radius:8px; overflow:hidden; }
-  th, td { padding:12px 14px; text-align:left; border-bottom:1px solid #2a2f3a; }  th { background:#1f2530; color:#f5c518; text-transform:uppercase; font-size:0.8em; letter-spacing:1px; }
+  th, td { padding:12px 14px; text-align:left; border-bottom:1px solid #2a2f3a; }
+
+  th { background:#1f2530; color:#f5c518; text-transform:uppercase; font-size:0.8em; letter-spacing:1px; }
   tr:hover { background:#1c2230; }
   .pos1 { color:#f5c518; font-weight:bold; }
   .pos2 { color:#c0c0c0; font-weight:bold; }
