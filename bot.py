@@ -25,8 +25,6 @@ intents.voice_states = True
 client = discord.Client(intents=intents)
 tree = app_commands.CommandTree(client)
 
-DB_FILE = 'jugadores.json'
-REGISTROS_FILE = 'castigos_bonus.json'
 
 PLATFORM_MAP = {
     'lan': 'la1', 'na': 'na1', 'las': 'la2', 'euw': 'euw1', 'eune': 'eun1',
@@ -68,32 +66,158 @@ EFECTOS_MALDICION = [
 VOICE_SESIONES = {}
 
 
-# ------------------- PERSISTENCIA -------------------
+
+# ------------------- PERSISTENCIA (Google Sheets) -------------------
+
+GOOGLE_SHEET_NAME = os.environ.get('GOOGLE_SHEET_NAME', 'SoloQ Challenge DB')
+GOOGLE_CREDENTIALS_JSON = os.environ.get('GOOGLE_CREDENTIALS_JSON', '')
+
+JUGADORES_HEADERS = [
+    'puuid', 'discord_id', 'nombre', 'region', 'lp_inicial', 'tier_inicial', 'rank_inicial',
+    'elo', 'estado', 'fecha_registro', 'bonus_total', 'castigos_total', 'logros',
+    'tiempo_voz_min', 'elo_previo', 'escudos', 'maldiciones', 'ultimo_escudo_uso',
+]
+META_HEADERS = ['clave', 'valor']
+REGISTROS_HEADERS = ['tipo', 'usuario', 'nombre', 'puntos', 'motivo', 'fecha']
+
+_gs_client = None
+_gs_spreadsheet = None
+
+
+def _get_spreadsheet():
+    global _gs_client, _gs_spreadsheet
+    if _gs_spreadsheet is not None:
+        return _gs_spreadsheet
+    import gspread
+    from google.oauth2.service_account import Credentials
+    scopes = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
+    creds_info = json.loads(GOOGLE_CREDENTIALS_JSON)
+    creds = Credentials.from_service_account_info(creds_info, scopes=scopes)
+    _gs_client = gspread.authorize(creds)
+    _gs_spreadsheet = _gs_client.open(GOOGLE_SHEET_NAME)
+    return _gs_spreadsheet
+
+
+def _get_or_create_worksheet(nombre, headers):
+    import gspread
+    sheet = _get_spreadsheet()
+    try:
+        ws = sheet.worksheet(nombre)
+    except gspread.exceptions.WorksheetNotFound:
+        ws = sheet.add_worksheet(title=nombre, rows=1000, cols=max(20, len(headers)))
+        ws.update('A1', [headers], value_input_option='RAW')
+    return ws
+
+
+def _valor_a_texto(valor):
+    if valor is None:
+        return ''
+    if isinstance(valor, (list, dict)):
+        return json.dumps(valor, ensure_ascii=False)
+    return str(valor)
+
 
 def cargar_db():
     try:
-        with open(DB_FILE, 'r') as f:
-            return json.load(f)
-    except Exception:
+        ws = _get_or_create_worksheet('jugadores', JUGADORES_HEADERS)
+        filas = ws.get_all_records(numericise_ignore=['all'])
+        db = {}
+        for f in filas:
+            puuid = f.get('puuid')
+            if not puuid:
+                continue
+            try:
+                logros = json.loads(f.get('logros') or '[]')
+            except Exception:
+                logros = []
+            try:
+                maldiciones = json.loads(f.get('maldiciones') or '[]')
+            except Exception:
+                maldiciones = []
+            db[puuid] = {
+                'discord_id': f.get('discord_id', ''),
+                'nombre': f.get('nombre', ''),
+                'region': f.get('region', ''),
+                'lp_inicial': int(float(f.get('lp_inicial') or 0)),
+                'tier_inicial': f.get('tier_inicial', ''),
+                'rank_inicial': f.get('rank_inicial', ''),
+                'elo': f.get('elo') or 'low',
+                'estado': f.get('estado') or 'pendiente',
+                'fecha_registro': f.get('fecha_registro', ''),
+                'bonus_total': int(float(f.get('bonus_total') or 0)),
+                'castigos_total': int(float(f.get('castigos_total') or 0)),
+                'logros': logros,
+                'tiempo_voz_min': float(f.get('tiempo_voz_min') or 0),                'elo_previo': f.get('elo_previo', ''),
+                'escudos': int(float(f.get('escudos') or 0)),
+                'maldiciones': maldiciones,
+                'ultimo_escudo_uso': f.get('ultimo_escudo_uso', ''),
+            }
+        meta_ws = _get_or_create_worksheet('meta', META_HEADERS)
+        for fila in meta_ws.get_all_records(numericise_ignore=['all']):
+            clave = fila.get('clave')
+            valor = fila.get('valor')
+            if clave == 'inicio_torneo' and valor:
+                db['inicio_torneo'] = valor
+            elif clave == 'torneo_iniciado':
+                db['torneo_iniciado'] = str(valor).strip().lower() in ('true', '1', 'si', 'si')
+        return db
+    except Exception as e:
+        print(f'Error cargando DB desde Google Sheets: {e}')
         return {}
 
 
 def guardar_db(db):
-    with open(DB_FILE, 'w') as f:
-        json.dump(db, f, indent=4)
+    try:
+        ws = _get_or_create_worksheet('jugadores', JUGADORES_HEADERS)
+        filas = [JUGADORES_HEADERS]
+        for puuid, data in jugadores_validos(db).items():
+            fila = [puuid] + [_valor_a_texto(data.get(campo, '')) for campo in JUGADORES_HEADERS[1:]]
+            filas.append(fila)
+        ws.clear()
+        ws.update('A1', filas, value_input_option='RAW')
+
+        meta_ws = _get_or_create_worksheet('meta', META_HEADERS)
+        meta_filas = [META_HEADERS,
+                      ['inicio_torneo', _valor_a_texto(db.get('inicio_torneo', ''))],
+                      ['torneo_iniciado', 'True' if db.get('torneo_iniciado') else 'False']]
+        meta_ws.clear()
+        meta_ws.update('A1', meta_filas, value_input_option='RAW')
+    except Exception as e:
+        print(f'Error guardando DB en Google Sheets: {e}')
 
 
 def cargar_registros():
     try:
-        with open(REGISTROS_FILE, 'r') as f:
-            return json.load(f)
-    except Exception:
+        ws = _get_or_create_worksheet('registros', REGISTROS_HEADERS)
+        filas = ws.get_all_records(numericise_ignore=['all'])
+        registros = []
+        for f in filas:
+            if not f.get('usuario'):
+                continue
+            registros.append({
+                'tipo': f.get('tipo', ''),
+                'usuario': f.get('usuario', ''),
+                'nombre': f.get('nombre', ''),
+                'puntos': int(float(f.get('puntos') or 0)),
+                'motivo': f.get('motivo', ''),
+                'fecha': f.get('fecha', ''),
+            })
+        return registros
+    except Exception as e:
+        print(f'Error cargando registros desde Google Sheets: {e}')
         return []
 
 
 def guardar_registros(registros):
-    with open(REGISTROS_FILE, 'w') as f:
-        json.dump(registros, f, indent=4)
+    try:
+        ws = _get_or_create_worksheet('registros', REGISTROS_HEADERS)
+        filas = [REGISTROS_HEADERS]
+        for r in registros:
+            filas.append([_valor_a_texto(r.get(campo, '')) for campo in REGISTROS_HEADERS])
+        ws.clear()
+        ws.update('A1', filas, value_input_option='RAW')
+    except Exception as e:
+        print(f'Error guardando registros en Google Sheets: {e}')
 
 
 def jugadores_validos(db):
@@ -172,8 +296,7 @@ def obtener_info_ranked(riot_id, region):
     url2 = f'https://{plataforma}.api.riotgames.com/lol/league/v4/entries/by-puuid/{puuid}'
     r2 = requests.get(url2, headers=headers)
     if r2.status_code != 200:
-        return None
-    for entry in r2.json():
+        return None    for entry in r2.json():
         if entry['queueType'] == 'RANKED_SOLO_5x5':
             return {
                 'puuid': puuid, 'tier': entry['tier'], 'rank': entry['rank'],
@@ -322,8 +445,7 @@ async def procesar_logros_y_roles(canal, high, low, db):
                                                    reason='Rol automatico de lider SoloQ Challenge')
                 if not lista:
                     continue
-                lider_id = int(lista[0]['discord_id'])
-                for miembro in list(rol.members):
+                lider_id = int(lista[0]['discord_id'])                for miembro in list(rol.members):
                     if miembro.id != lider_id:
                         try:
                             await miembro.remove_roles(rol, reason='Ya no es lider')
@@ -472,8 +594,7 @@ async def perfil(interaction: discord.Interaction):
     embed.add_field(name='Categoria', value='High Elo' if objetivo['elo'] == 'high' else 'Low Elo', inline=True)
     embed.add_field(name='Posicion', value=posicion_txt, inline=True)
     embed.add_field(name='Rango actual', value=f'{objetivo["tier_actual"]} {objetivo["rank_actual"]}', inline=True)
-    embed.add_field(name='LP ganados', value=str(objetivo['lp_ganados']), inline=True)
-    embed.add_field(name='Bonus', value=f'+{objetivo["bonus"]}', inline=True)
+    embed.add_field(name='LP ganados', value=str(objetivo['lp_ganados']), inline=True)    embed.add_field(name='Bonus', value=f'+{objetivo["bonus"]}', inline=True)
     embed.add_field(name='Castigos', value=f'-{objetivo["castigos"]}', inline=True)
     embed.add_field(name='Tiempo en voz', value=f'{objetivo["tiempo_voz_min"]} min', inline=True)
     embed.add_field(name='Total', value=f'**{objetivo["total"]} pts**', inline=True)
@@ -622,8 +743,7 @@ async def clasificar(interaction: discord.Interaction, usuario: discord.Member, 
     await interaction.followup.send('Usuario no encontrado en el torneo.')
 
 
-@tree.command(name='escudos', description='Consulta tus Escudos Azules y maldiciones activas')
-async def escudos(interaction: discord.Interaction):
+@tree.command(name='escudos', description='Consulta tus Escudos Azules y maldiciones activas')async def escudos(interaction: discord.Interaction):
     await interaction.response.defer()
     user_id = str(interaction.user.id)
     db = cargar_db()
@@ -772,8 +892,7 @@ async def iniciar_torneo(interaction: discord.Interaction):
     if CANAL_CLASIFICACION_ID != 0:
         canal = client.get_channel(CANAL_CLASIFICACION_ID)
         if canal:
-            await canal.send('**EL TORNEO HA COMENZADO OFICIALMENTE!** Buena suerte a todos.')
-            await mostrar_tabla(canal)
+            await canal.send('**EL TORNEO HA COMENZADO OFICIALMENTE!** Buena suerte a todos.')            await mostrar_tabla(canal)
 
 
 @tree.command(name='castigar', description='(Admin) Resta puntos a un jugador')
@@ -922,8 +1041,7 @@ PAGINA_HTML = """
   .categoria { margin-bottom:40px; }
   .categoria h2 { border-left:5px solid #f5c518; padding-left:12px; font-size:1.4em; }
   table { width:100%; border-collapse:collapse; background:#161b22; border-radius:8px; overflow:hidden; }
-  th, td { padding:12px 14px; text-align:left; border-bottom:1px solid #2a2f3a; }
-  th { background:#1f2530; color:#f5c518; text-transform:uppercase; font-size:0.8em; letter-spacing:1px; }
+  th, td { padding:12px 14px; text-align:left; border-bottom:1px solid #2a2f3a; }  th { background:#1f2530; color:#f5c518; text-transform:uppercase; font-size:0.8em; letter-spacing:1px; }
   tr:hover { background:#1c2230; }
   .pos1 { color:#f5c518; font-weight:bold; }
   .pos2 { color:#c0c0c0; font-weight:bold; }
