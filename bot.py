@@ -1011,10 +1011,16 @@ async def on_voice_state_update(member, before, after):
         VOICE_SESIONES.pop(discord_id, None)
 
 
+_comandos_sincronizados = False
+
+
 @client.event
 async def on_ready():
+    global _comandos_sincronizados
     print(f'Bot conectado como {client.user}')
-    await tree.sync()
+    if not _comandos_sincronizados:
+                await tree.sync()
+            _comandos_sincronizados = True
     ahora = datetime.datetime.now()
     for guild in client.guilds:
         for vc in guild.voice_channels:
