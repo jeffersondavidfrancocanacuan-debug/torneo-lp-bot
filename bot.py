@@ -1019,8 +1019,8 @@ async def on_ready():
     global _comandos_sincronizados
     print(f'Bot conectado como {client.user}')
     if not _comandos_sincronizados:
-                await tree.sync()
-            _comandos_sincronizados = True
+        await tree.sync()
+        _comandos_sincronizados = True
     ahora = datetime.datetime.now()
     for guild in client.guilds:
         for vc in guild.voice_channels:
