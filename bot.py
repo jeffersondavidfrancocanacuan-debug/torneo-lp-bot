@@ -537,7 +537,9 @@ async def procesar_logros_y_roles(canal, high, low, db):
                     info_logro = LOGROS.get(clave)
                     if info_logro:
                         extra = ' (+1 Escudo Azul)' if otorgados > 0 else ' (inventario de escudos lleno)'
-                        anuncios.append(f"{info_logro['nombre']} - **{j['nombre']}** {info_logro['desc']} ({'High' if categoria == 'high' else 'Low'} Elo){extra}")
+                        anuncios.append(
+                            f"{info_logro['nombre']} - <@{j['discord_id']}> **{j['nombre']}** {info_logro['desc']} "
+                            f"({'High' if categoria == 'high' else 'Low'} Elo){extra}")
 
     guardar_db(db)
 
@@ -774,7 +776,49 @@ async def reglamento(interaction: discord.Interaction):
         name='8. Conducta',
         value='Prohibido el uso de cuentas ajenas, boosting externo, o evadir la verificacion de voz. La Directiva puede descalificar por incumplimiento.',
         inline=False)
-    embed.set_footer(text='Usa /ayuda para ver todos los comandos disponibles.')
+    embed.set_footer(text='Usa /ayuda para ver todos los comandos disponibles. Usa /terminos para ver el glosario completo.')
+    await interaction.response.send_message(embed=embed)
+
+
+@tree.command(name='terminos', description='Glosario de terminos del torneo (Escudos, Aegis, Escalado, etc.)')
+async def terminos(interaction: discord.Interaction):
+    embed = discord.Embed(
+        title='Glosario de terminos - SoloQ Challenge',
+        description='Definiciones oficiales de cada termino usado por el bot y el reglamento.',
+        color=0xf5c518,
+    )
+    embed.add_field(
+        name='Escudo Azul',
+        value=(f'Item/moneda que un jugador acumula (maximo {ESCUDOS_MAX_INVENTARIO}) al desbloquear logros o por '
+               f'hazanas otorgadas por la Directiva. Se GASTA usando `/maldecir` para lanzar una maldicion a otro jugador.'),
+        inline=False)
+    embed.add_field(
+        name='Maldicion (Castigo)',
+        value=('Efecto aleatorio que recibe un jugador cuando alguien usa `/maldecir` contra el (hechizos fijos, '
+               'campeon a elegir, rol aleatorio, baneo forzado, o rebote). Es diferente de un "castigo manual" '
+               '(`/castigar`), aunque ambos restan puntos o imponen una condicion.'),
+        inline=False)
+    embed.add_field(
+        name='Pendiente / Cumplido',
+        value=('Estado de una maldicion. Queda **pendiente** hasta que la Directiva confirma en partida que se '
+               'ejecuto y la marca como **cumplida** con `/cumplir_castigo`. Las pendientes cuentan para activar el Aegis.'),
+        inline=False)
+    embed.add_field(
+        name='Aegis (proteccion)',
+        value=(f'Escudo TEMPORAL distinto del Escudo Azul: se activa automaticamente por {AEGIS_DURACION_HORAS}h cuando '
+               f'un jugador acumula {CASTIGOS_PENDIENTES_PARA_AEGIS} maldiciones activas sin cumplir. Mientras dura, nadie '
+               f'puede maldecirlo. No se gasta ni se otorga manualmente, es automatico.'),
+        inline=False)
+    embed.add_field(
+        name='Escalado',
+        value=('Metrica de progreso del torneo: subir de division/liga (Hierro-Bronce-...-Retador) y de sub-rango '
+               '(IV-III-II-I) dentro de cada una, en vez de solo contar LP crudo.'),
+        inline=False)
+    embed.add_field(
+        name='High Elo / Low Elo',
+        value='Categorias del torneo asignadas manualmente por la Directiva con `/clasificar` tras revisar la cuenta.',
+        inline=False)
+    embed.set_footer(text='Usa /reglamento para ver las reglas completas.')
     await interaction.response.send_message(embed=embed)
 
 
@@ -873,6 +917,7 @@ async def ayuda(interaction: discord.Interaction):
                '`/tabla` - Muestra la clasificacion al instante\n'
                '`/participantes` - Lista a todos los inscritos y su categoria\n'
                '`/reglamento` - Muestra el reglamento completo del torneo\n'
+               '`/terminos` - Glosario: Escudo Azul, Aegis, Escalado, Pendiente/Cumplido, etc.\n'
                '`/escudos` - Ve tus Escudos Azules y maldiciones activas\n'
                '`/maldecir` - Gasta un Escudo Azul y maldice a otro jugador\n'
                '`/elegir_campeon` - Elige tu campeon si te tocó maldicion de campeon'),
@@ -948,7 +993,8 @@ async def clasificar(interaction: discord.Interaction, usuario: discord.Member, 
             data['elo'] = categoria.value
             guardar_db(db)
             await interaction.followup.send(
-                f'**{data["nombre"]}** clasificado en **{"High" if categoria.value == "high" else "Low"} Elo**. Ya aparece en la tabla (si cumple el requisito de voz).')
+                f'<@{usuario.id}> fuiste clasificado en **{"High" if categoria.value == "high" else "Low"} Elo**. '
+                f'Ya apareces en la tabla (si cumples el requisito de voz).')
             return
     await interaction.followup.send('Usuario no encontrado en el torneo.')
 
@@ -1069,11 +1115,13 @@ async def maldecir(interaction: discord.Interaction, usuario: discord.Member):
     else:
         embed.add_field(name='Efecto', value=efecto['texto'], inline=False)
     embed.set_footer(text=f'Dura {MALDICION_DURACION_HORAS}h - Maximo {MALDICION_MAX_ACTIVAS} activas por jugador - Cooldown de lanzamiento: {MALDICION_COOLDOWN_HORAS}h')
-    await interaction.followup.send(embed=embed)
+    await interaction.followup.send(
+        content=f'<@{destino_data["discord_id"]}> te lanzaron una maldicion Blue Shell!',
+        embed=embed)
     if aegis_otorgado:
         await interaction.followup.send(
-            f'**{destino_data["nombre"]}** acumulo {CASTIGOS_PENDIENTES_PARA_AEGIS} maldiciones sin cumplir: '
-            f'se activo su **Aegis** por {AEGIS_DURACION_HORAS}h. Nadie podra maldecirlo mientras dure.')
+            f'<@{destino_data["discord_id"]}> acumulaste {CASTIGOS_PENDIENTES_PARA_AEGIS} castigos (maldiciones) sin cumplir: '
+            f'se activo tu **Aegis** (proteccion) por {AEGIS_DURACION_HORAS}h. Nadie podra maldecirte mientras dure.')
 
 
 @tree.command(name='elegir_campeon', description='Elige tu campeon si te toco una maldicion de campeon aleatorio')
@@ -1128,7 +1176,8 @@ async def cumplir_castigo(interaction: discord.Interaction, usuario: discord.Mem
                     m['cumplido'] = True
                     break
             guardar_db(db)
-            await interaction.followup.send(f'Castigo de **{data["nombre"]}** marcado como cumplido: "{objetivo["texto"]}"')
+            await interaction.followup.send(
+                f'<@{usuario.id}> tu castigo fue marcado como **cumplido** por la Directiva: "{objetivo["texto"]}"')
             return
     await interaction.followup.send('Usuario no encontrado en el torneo.')
 
@@ -1148,7 +1197,8 @@ async def otorgar_escudo(interaction: discord.Interaction, usuario: discord.Memb
             data['escudos'] = data.get('escudos', 0) + 1
             guardar_db(db)
             await interaction.followup.send(
-                f'**{data["nombre"]}** recibio un Escudo Azul. Motivo: {motivo or "N/A"}. Total: {data["escudos"]}/{ESCUDOS_MAX_INVENTARIO}.')
+                f'<@{usuario.id}> recibiste un **Escudo Azul** (item para lanzar `/maldecir`). Motivo: {motivo or "N/A"}. '
+                f'Total: {data["escudos"]}/{ESCUDOS_MAX_INVENTARIO}.')
             return
     await interaction.followup.send('Usuario no encontrado en el torneo.')
 
@@ -1226,7 +1276,7 @@ async def castigar(interaction: discord.Interaction, usuario: discord.Member, pu
             })
             guardar_registros(registros)
             await interaction.followup.send(
-                f'**{data["nombre"]}** ha recibido un castigo de **-{puntos} puntos**.\n'
+                f'<@{usuario.id}> recibiste un castigo de **-{puntos} puntos**.\n'
                 f'Motivo: {motivo}\nTotal castigos: -{data["castigos_total"]}')
             return
     await interaction.followup.send('Usuario no encontrado en el torneo.')
@@ -1254,7 +1304,7 @@ async def bonus(interaction: discord.Interaction, usuario: discord.Member, punto
             })
             guardar_registros(registros)
             await interaction.followup.send(
-                f'**{data["nombre"]}** ha recibido un bonus de **+{puntos} puntos**.\n'
+                f'<@{usuario.id}> recibiste un bonus de **+{puntos} puntos**.\n'
                 f'Motivo: {motivo}\nTotal bonus: +{data["bonus_total"]}')
             return
     await interaction.followup.send('Usuario no encontrado en el torneo.')
