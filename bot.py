@@ -17,6 +17,7 @@ DURACION_TORNEO = int(os.environ.get('DURACION_TORNEO', '30'))
 JUEGOS_MINIMOS_CUENTA = int(os.environ.get('JUEGOS_MINIMOS_CUENTA', '15'))
 VOZ_MINIMA_MINUTOS = float(os.environ.get('VOZ_MINIMA_MINUTOS', '1'))
 FECHA_INICIO_TORNEO = os.environ.get('FECHA_INICIO_TORNEO', '2026-08-14T00:00:00')
+PREMIO_GANADOR_USD = os.environ.get('PREMIO_GANADOR_USD', '100')
 # =================================================
 
 intents = discord.Intents.default()
@@ -38,6 +39,28 @@ REGION_MAP = {
 
 ROL_LIDER_LOW = 'Lider Low Elo'
 ROL_LIDER_HIGH = 'Lider High Elo'
+ROL_DIRECTIVA_NOMBRE = 'Directiva'
+
+
+def es_directiva(member):
+    """True si el miembro es Administrador de Discord o tiene el rol 'Directiva'."""
+    try:
+        if member.guild_permissions.administrator:
+            return True
+    except Exception:
+        pass
+    return any(r.name.lower() == ROL_DIRECTIVA_NOMBRE.lower() for r in getattr(member, 'roles', []))
+
+
+async def requiere_directiva(interaction: discord.Interaction) -> bool:
+    """Verifica permisos de directiva; responde y retorna False si no las tiene."""
+    if not es_directiva(interaction.user):
+        await interaction.response.send_message(
+            f'Solo miembros con el rol **{ROL_DIRECTIVA_NOMBRE}** (o Administrador) pueden usar este comando.',
+            ephemeral=True)
+        return False
+    return True
+
 
 LOGROS = {
     'lp_50':   {'nombre': '+50 LP',  'desc': 'Alcanzo 50 puntos netos'},
@@ -48,23 +71,50 @@ LOGROS = {
     'top3':    {'nombre': 'Podio',   'desc': 'Entro al top 3 de su categoria'},
 }
 
-# ------------------- ESCUDOS AZULES (maldiciones estilo soloqchallenge.gg) -------------------
+# ------------------- ESCUDOS AZULES (maldiciones estilo Blue Shell) -------------------
 MALDICION_COOLDOWN_HORAS = 24
 MALDICION_MAX_ACTIVAS = 3
 MALDICION_DURACION_HORAS = 24
+ESCUDOS_MAX_INVENTARIO = 3          # maximo de Escudos Azules que un jugador puede acumular
+CASTIGOS_PENDIENTES_PARA_AEGIS = 3  # castigos SIN cumplir recibidos que activan el Aegis
+AEGIS_DURACION_HORAS = 24           # proteccion temporal tras activar el Aegis
 
-EFECTOS_MALDICION = [
-    'Hechizos de invocador obligatorios: solo Flash + Ignite en tu proxima partida.',
-    'Campeon aleatorio obligatorio (usa una ruleta random) en tu proxima partida.',
-    'Rol/posicion aleatoria obligatoria en tu proxima partida.',
-    'Debes banear el campeon que te pida el que te maldijo en tu proxima partida.',
-    'COMODIN - Rebote: la maldicion vuelve a quien te la lanzo.',
-    'COMODIN - Rebote al azar: la maldicion salta a otro jugador random del torneo.',
+DDRAGON_VERSION = '14.23.1'
+CAMPEONES_POOL = [
+    'Teemo', 'Yuumi', 'Singed', 'Nunu', 'Amumu', 'Shaco', 'Fiddlesticks',
+    'Urgot', 'Heimerdinger', 'Ziggs', 'Corki', 'Kled', 'Rammus', 'Zilean',
+    'Yorick', 'Illaoi', 'Cho\'Gath', 'Nasus', 'Veigar', 'Anivia',
 ]
+
+
+def icono_campeon(nombre):
+    n = nombre.replace("'", "").replace(" ", "")
+    return f'https://ddragon.leagueoflegends.com/cdn/{DDRAGON_VERSION}/img/champion/{n}.png'
+
+
+def generar_efecto_maldicion():
+    """Devuelve un dict {tipo, texto, opciones} representando el efecto de la maldicion."""
+    tipo = random.choice(['hechizos', 'campeon', 'rol', 'baneo', 'rebote_lanzador', 'rebote_random'])
+    if tipo == 'campeon':
+        opciones = random.sample(CAMPEONES_POOL, 3)
+        return {
+            'tipo': 'campeon',
+            'texto': 'Debes elegir y jugar uno de estos 3 campeones en tu proxima partida (usa /elegir_campeon).',
+            'opciones': opciones,
+            'elegido': None,
+        }
+    textos = {
+        'hechizos': 'Hechizos de invocador obligatorios: solo Flash + Ignite en tu proxima partida.',
+        'rol': 'Rol/posicion aleatoria obligatoria en tu proxima partida.',
+        'baneo': 'Debes banear el campeon que te pida quien te maldijo en tu proxima partida.',
+        'rebote_lanzador': 'COMODIN - Rebote: la maldicion vuelve a quien te la lanzo.',
+        'rebote_random': 'COMODIN - Rebote al azar: la maldicion salta a otro jugador random del torneo.',
+    }
+    return {'tipo': tipo, 'texto': textos[tipo], 'opciones': [], 'elegido': None}
+
 
 # Sesiones de voz activas en memoria: {discord_id: datetime_de_ultimo_checkpoint}
 VOICE_SESIONES = {}
-
 
 
 # ------------------- PERSISTENCIA (Google Sheets) -------------------
@@ -75,7 +125,7 @@ GOOGLE_CREDENTIALS_JSON = os.environ.get('GOOGLE_CREDENTIALS_JSON', '')
 JUGADORES_HEADERS = [
     'puuid', 'discord_id', 'nombre', 'region', 'lp_inicial', 'tier_inicial', 'rank_inicial',
     'elo', 'estado', 'fecha_registro', 'bonus_total', 'castigos_total', 'logros',
-    'tiempo_voz_min', 'elo_previo', 'escudos', 'maldiciones', 'ultimo_escudo_uso',
+    'tiempo_voz_min', 'elo_previo', 'escudos', 'maldiciones', 'ultimo_escudo_uso', 'escudo_hasta',
 ]
 META_HEADERS = ['clave', 'valor']
 REGISTROS_HEADERS = ['tipo', 'usuario', 'nombre', 'puntos', 'motivo', 'fecha']
@@ -134,6 +184,12 @@ def cargar_db():
                 maldiciones = json.loads(f.get('maldiciones') or '[]')
             except Exception:
                 maldiciones = []
+            # compatibilidad con maldiciones antiguas (sin campo 'cumplido'/'tipo')
+            for m in maldiciones:
+                m.setdefault('cumplido', False)
+                m.setdefault('tipo', 'legacy')
+                m.setdefault('opciones', [])
+                m.setdefault('elegido', None)
             db[puuid] = {
                 'discord_id': f.get('discord_id', ''),
                 'nombre': f.get('nombre', ''),
@@ -141,18 +197,18 @@ def cargar_db():
                 'lp_inicial': int(float(f.get('lp_inicial') or 0)),
                 'tier_inicial': f.get('tier_inicial', ''),
                 'rank_inicial': f.get('rank_inicial', ''),
-                'elo': f.get('elo') or 'low',
+                'elo': f.get('elo') or '',
                 'estado': f.get('estado') or 'pendiente',
                 'fecha_registro': f.get('fecha_registro', ''),
                 'bonus_total': int(float(f.get('bonus_total') or 0)),
                 'castigos_total': int(float(f.get('castigos_total') or 0)),
                 'logros': logros,
                 'tiempo_voz_min': float(f.get('tiempo_voz_min') or 0),
-
-                                  'elo_previo': f.get('elo_previo', ''),
+                'elo_previo': f.get('elo_previo', ''),
                 'escudos': int(float(f.get('escudos') or 0)),
                 'maldiciones': maldiciones,
                 'ultimo_escudo_uso': f.get('ultimo_escudo_uso', ''),
+                'escudo_hasta': f.get('escudo_hasta', ''),
             }
         meta_ws = _get_or_create_worksheet('meta', META_HEADERS)
         for fila in meta_ws.get_all_records(numericise_ignore=['all']):
@@ -161,7 +217,7 @@ def cargar_db():
             if clave == 'inicio_torneo' and valor:
                 db['inicio_torneo'] = valor
             elif clave == 'torneo_iniciado':
-                db['torneo_iniciado'] = str(valor).strip().lower() in ('true', '1', 'si', 'si')
+                db['torneo_iniciado'] = str(valor).strip().lower() in ('true', '1', 'si', 'sí')
         return db
     except Exception as e:
         print(f'Error cargando DB desde Google Sheets: {e}')
@@ -264,6 +320,11 @@ def maldiciones_activas_de(data):
     return activas
 
 
+def castigos_pendientes_de(data):
+    """Maldiciones activas y sin marcar como 'cumplido' por la directiva."""
+    return [m for m in maldiciones_activas_de(data) if not m.get('cumplido')]
+
+
 def tiempo_restante_cooldown(data):
     ultimo = data.get('ultimo_escudo_uso')
     if not ultimo:
@@ -274,6 +335,28 @@ def tiempo_restante_cooldown(data):
         return 0
     transcurridas = (datetime.datetime.now() - fecha).total_seconds() / 3600
     return max(MALDICION_COOLDOWN_HORAS - transcurridas, 0)
+
+
+def aegis_activo(data):
+    hasta = data.get('escudo_hasta')
+    if not hasta:
+        return False
+    try:
+        fecha = datetime.datetime.fromisoformat(hasta)
+    except Exception:
+        return False
+    return datetime.datetime.now() < fecha
+
+
+def aegis_restante_horas(data):
+    hasta = data.get('escudo_hasta')
+    if not hasta:
+        return 0
+    try:
+        fecha = datetime.datetime.fromisoformat(hasta)
+    except Exception:
+        return 0
+    return max((fecha - datetime.datetime.now()).total_seconds() / 3600, 0)
 
 
 # ------------------- RIOT API -------------------
@@ -299,7 +382,6 @@ def obtener_info_ranked(riot_id, region):
     r2 = requests.get(url2, headers=headers)
     if r2.status_code != 200:
         return None
-
     for entry in r2.json():
         if entry['queueType'] == 'RANKED_SOLO_5x5':
             return {
@@ -313,13 +395,9 @@ def obtener_info_ranked(riot_id, region):
     }
 
 
-def determinar_elo(tier):
-    high_tiers = ['MASTER', 'GRANDMASTER', 'CHALLENGER']
-    return 'high' if tier.upper() in high_tiers else 'low'
-
-
 TIER_ORDEN = ['IRON', 'BRONZE', 'SILVER', 'GOLD', 'PLATINUM', 'EMERALD',
               'DIAMOND', 'MASTER', 'GRANDMASTER', 'CHALLENGER']
+RANK_ORDEN = ['IV', 'III', 'II', 'I']  # de menor a mayor dentro de una division
 
 
 def tier_index(tier):
@@ -327,6 +405,25 @@ def tier_index(tier):
         return TIER_ORDEN.index(tier.upper())
     except ValueError:
         return -1
+
+
+def rank_index(rank):
+    try:
+        return RANK_ORDEN.index(rank.upper())
+    except ValueError:
+        return 0
+
+
+def valor_escalado(tier, rank, lp):
+    """Metrica de progreso basada en escalar de division/liga, no solo LP crudo.
+    Cada division vale 400 puntos, cada sub-rango (IV-I) vale 100 puntos, mas los LP dentro de ese rango.
+    A partir de Master+ (sin sub-rangos) se usa el LP directo sumado al piso de Master."""
+    ti = max(tier_index(tier), 0)
+    if tier.upper() in ('MASTER', 'GRANDMASTER', 'CHALLENGER'):
+        piso = tier_index('MASTER') * 400
+        return piso + lp
+    ri = rank_index(rank)
+    return ti * 400 + ri * 100 + min(lp, 100)
 
 
 # ------------------- ESTADO DEL TORNEO -------------------
@@ -354,15 +451,20 @@ def calcular_estado_torneo(db):
 # ------------------- CALCULO DE TABLA -------------------
 
 def calcular_tabla(db):
-    """Devuelve (high, low, pendientes, sin_voz) con los datos ya frescos de Riot."""
+    """Devuelve (high, low, pendientes, sin_voz) con los datos ya frescos de Riot.
+    El orden dentro de cada categoria se basa en 'escalado' (division/liga), no solo LP crudo."""
     high, low, pendientes, sin_voz = [], [], [], []
     for puuid, data in jugadores_validos(db).items():
         info = obtener_info_ranked(data['nombre'], data['region'])
         if info is None:
             continue
         lp_ganados = info['lp'] - data['lp_inicial']
-        total = lp_ganados + data.get('bonus_total', 0) - data.get('castigos_total', 0)
+        escalado_inicial = valor_escalado(data.get('tier_inicial', info['tier']), data.get('rank_inicial', ''), data['lp_inicial'])
+        escalado_actual = valor_escalado(info['tier'], info['rank'], info['lp'])
+        progreso_escalado = escalado_actual - escalado_inicial
+        total = progreso_escalado + data.get('bonus_total', 0) - data.get('castigos_total', 0)
         tiempo_voz = round(data.get('tiempo_voz_min', 0), 1)
+        pendientes_castigo = castigos_pendientes_de(data)
         jugador = {
             'puuid': puuid,
             'discord_id': data['discord_id'],
@@ -372,17 +474,21 @@ def calcular_tabla(db):
             'tier_actual': info['tier'],
             'rank_actual': info['rank'],
             'tier_inicial': data.get('tier_inicial', info['tier']),
-            'elo': data.get('elo', 'low'),
+            'escalado': progreso_escalado,
+            'elo': data.get('elo', ''),
             'bonus': data.get('bonus_total', 0),
             'castigos': data.get('castigos_total', 0),
             'total': total,
-            'estado': data.get('estado', 'aprobado'),
+            'estado': data.get('estado', 'pendiente'),
             'tiempo_voz_min': tiempo_voz,
             'voz_verificado': tiempo_voz >= VOZ_MINIMA_MINUTOS,
             'elo_previo': data.get('elo_previo', ''),
             'escudos': data.get('escudos', 0),
+            'aegis_activo': aegis_activo(data),
+            'aegis_restante': round(aegis_restante_horas(data), 1),
+            'castigos_pendientes': len(pendientes_castigo),
         }
-        if jugador['estado'] == 'pendiente':
+        if jugador['estado'] == 'pendiente' or not jugador['elo']:
             pendientes.append(jugador)
         elif not jugador['voz_verificado']:
             sin_voz.append(jugador)
@@ -424,11 +530,14 @@ async def procesar_logros_y_roles(canal, high, low, db):
             recien_desbloqueados = nuevos - logros_actuales
             if recien_desbloqueados:
                 data['logros'] = list(logros_actuales | nuevos)
-                data['escudos'] = data.get('escudos', 0) + len(recien_desbloqueados)
+                espacio = max(ESCUDOS_MAX_INVENTARIO - data.get('escudos', 0), 0)
+                otorgados = min(len(recien_desbloqueados), espacio)
+                data['escudos'] = data.get('escudos', 0) + otorgados
                 for clave in recien_desbloqueados:
                     info_logro = LOGROS.get(clave)
                     if info_logro:
-                        anuncios.append(f"{info_logro['nombre']} - **{j['nombre']}** {info_logro['desc']} ({'High' if categoria == 'high' else 'Low'} Elo) (+1 Escudo Azul)")
+                        extra = ' (+1 Escudo Azul)' if otorgados > 0 else ' (inventario de escudos lleno)'
+                        anuncios.append(f"{info_logro['nombre']} - **{j['nombre']}** {info_logro['desc']} ({'High' if categoria == 'high' else 'Low'} Elo){extra}")
 
     guardar_db(db)
 
@@ -450,7 +559,6 @@ async def procesar_logros_y_roles(canal, high, low, db):
                 if not lista:
                     continue
                 lider_id = int(lista[0]['discord_id'])
-
                 for miembro in list(rol.members):
                     if miembro.id != lider_id:
                         try:
@@ -471,7 +579,7 @@ async def procesar_logros_y_roles(canal, high, low, db):
 
 @tree.command(name='registrar', description='Registra tu cuenta de LoL (LAN) para el torneo')
 @app_commands.describe(nombre='Tu Riot ID completo, ej: Nombre#LAN1',
-                        elo_previo='Opcional: tu elo mas alto alcanzado antes (ej. Master, Diamond). Ayuda a la directiva a clasificarte si tu cuenta es nueva.')
+                        elo_previo='Opcional: tu elo mas alto alcanzado antes (ej. Master, Diamond). Ayuda a la directiva a clasificarte.')
 async def registrar(interaction: discord.Interaction, nombre: str, elo_previo: str = ""):
     await interaction.response.defer()
     user_id = str(interaction.user.id)
@@ -489,9 +597,8 @@ async def registrar(interaction: discord.Interaction, nombre: str, elo_previo: s
         await interaction.followup.send('No se encontro la cuenta. Verifica el Riot ID exacto (Nombre#TAG) y que sea de LAN.')
         return
 
-    total_partidas = info['wins'] + info['losses']
-    estado = 'pendiente' if total_partidas < JUEGOS_MINIMOS_CUENTA else 'aprobado'
-
+    # Todas las cuentas empiezan SIN elo asignado (unranked para el torneo) hasta que la
+    # directiva las revise manualmente con /clasificar y les asigne High Elo o Low Elo.
     ahora = datetime.datetime.now()
     db[info['puuid']] = {
         'discord_id': user_id,
@@ -500,8 +607,8 @@ async def registrar(interaction: discord.Interaction, nombre: str, elo_previo: s
         'lp_inicial': info['lp'],
         'tier_inicial': info['tier'],
         'rank_inicial': info['rank'],
-        'elo': determinar_elo(info['tier']),
-        'estado': estado,
+        'elo': '',
+        'estado': 'pendiente',
         'fecha_registro': str(ahora),
         'bonus_total': 0,
         'castigos_total': 0,
@@ -511,29 +618,21 @@ async def registrar(interaction: discord.Interaction, nombre: str, elo_previo: s
         'escudos': 0,
         'maldiciones': [],
         'ultimo_escudo_uso': None,
+        'escudo_hasta': '',
     }
     if 'inicio_torneo' not in db:
         db['inicio_torneo'] = str(ahora)
     guardar_db(db)
 
-    categoria_txt = "High Elo" if db[info["puuid"]]["elo"] == "high" else "Low Elo"
     elo_previo_txt = f'\nElo previo declarado: **{elo_previo}** (la directiva lo vera al revisar tu cuenta).' if elo_previo else ''
-    if estado == 'pendiente':
-        await interaction.followup.send(
-            f'{interaction.user.mention} registrado como **{info["nombre"]}** (LAN).\n'
-            f'Tu cuenta tiene solo {total_partidas} partidas en soloQ, por lo que queda **pendiente de revision** '
-            f'por la directiva antes de aparecer en la tabla (posible cuenta nueva/comprada).\n'
-            f'Categoria sugerida: {categoria_txt}.{elo_previo_txt}\n'
-            f'Recuerda: ademas de la aprobacion, tus puntos solo son validos si te conectas al chat de voz del servidor (cualquier canal).'
-        )
-    else:
-        await interaction.followup.send(
-            f'{interaction.user.mention} registrado como **{info["nombre"]}** (LAN).\n'
-            f'LP inicial: {info["lp"]} ({info["tier"]} {info["rank"]}).\n'
-            f'Categoria: {categoria_txt}.\n'
-            f'Importante: para que tus puntos sean validos debes conectarte al chat de voz del servidor (cualquier canal) mientras juegas.\n'
-            f'A jugar! El torneo dura {DURACION_TORNEO} dias.'
-        )
+    await interaction.followup.send(
+        f'{interaction.user.mention} registrado como **{info["nombre"]}** (LAN).\n'
+        f'Rango actual detectado: {info["tier"]} {info["rank"]} ({info["lp"]} LP).\n'
+        f'Tu cuenta queda **pendiente de revision**: la directiva la clasificara manualmente en '
+        f'**High Elo** o **Low Elo** con `/clasificar`.{elo_previo_txt}\n'
+        f'Recuerda: ademas de la aprobacion, tus puntos solo son validos si te conectas al chat de voz del servidor (cualquier canal). '
+        f'Usa `/reglamento` para ver las reglas completas y `/participantes` para ver quien mas esta inscrito.'
+    )
 
 
 @tree.command(name='progreso', description='Mira tu progreso actual')
@@ -548,16 +647,22 @@ async def progreso(interaction: discord.Interaction):
             if info is None:
                 await interaction.followup.send('No se pudo obtener tu informacion. Intenta mas tarde.')
                 return
-            lp_ganados = info['lp'] - data['lp_inicial']
-            total = lp_ganados + data.get('bonus_total', 0) - data.get('castigos_total', 0)
-            estado_txt = 'Pendiente de revision' if data.get('estado') == 'pendiente' else 'Aprobado'
+            progreso_escalado = valor_escalado(info['tier'], info['rank'], info['lp']) - valor_escalado(
+                data.get('tier_inicial', info['tier']), data.get('rank_inicial', ''), data['lp_inicial'])
+            total = progreso_escalado + data.get('bonus_total', 0) - data.get('castigos_total', 0)
+            if not data.get('elo'):
+                estado_txt = 'Pendiente de clasificacion manual (Directiva)'
+            elif data.get('estado') == 'pendiente':
+                estado_txt = 'Pendiente de revision'
+            else:
+                estado_txt = f'Aprobado - {"High Elo" if data["elo"] == "high" else "Low Elo"}'
             tiempo_voz = round(data.get('tiempo_voz_min', 0), 1)
             voz_txt = f'{tiempo_voz} min (verificado)' if tiempo_voz >= VOZ_MINIMA_MINUTOS else f'{tiempo_voz} min (necesitas {round(VOZ_MINIMA_MINUTOS - tiempo_voz, 1)} min mas conectado a voz para que tus puntos cuenten)'
             await interaction.followup.send(
                 f'**{data["nombre"]}** ({estado_txt})\n'
-                f'LP inicial: {data["lp_inicial"]} ({data["tier_inicial"]} {data["rank_inicial"]})\n'
-                f'LP actual: {info["lp"]} ({info["tier"]} {info["rank"]})\n'
-                f'LP ganados: {lp_ganados}\n'
+                f'Rango inicial: {data["tier_inicial"]} {data["rank_inicial"]} ({data["lp_inicial"]} LP)\n'
+                f'Rango actual: {info["tier"]} {info["rank"]} ({info["lp"]} LP)\n'
+                f'Progreso (escalado de division/liga): {progreso_escalado} pts\n'
                 f'Bonus: +{data.get("bonus_total", 0)} | Castigos: -{data.get("castigos_total", 0)}\n'
                 f'Tiempo en chat de voz: {voz_txt}\n'
                 f'**Total: {total} puntos**'
@@ -583,7 +688,9 @@ async def perfil(interaction: discord.Interaction):
         await interaction.followup.send('No estas registrado. Usa `/registrar` primero.')
         return
 
-    if objetivo['estado'] == 'pendiente':
+    if not objetivo['elo']:
+        posicion_txt = 'Pendiente de clasificacion manual por la Directiva (High/Low Elo)'
+    elif objetivo['estado'] == 'pendiente':
         posicion_txt = 'En revision por la directiva (no aparece en la tabla aun)'
     elif not objetivo['voz_verificado']:
         faltante = round(VOZ_MINIMA_MINUTOS - objetivo['tiempo_voz_min'], 1)
@@ -597,22 +704,110 @@ async def perfil(interaction: discord.Interaction):
     logros_txt = ' '.join(LOGROS[c]['nombre'] for c in data.get('logros', []) if c in LOGROS) or 'Sin logros aun'
 
     embed = discord.Embed(title=f'Perfil de {objetivo["nombre"]}', color=0x5865F2)
-    embed.add_field(name='Categoria', value='High Elo' if objetivo['elo'] == 'high' else 'Low Elo', inline=True)
+    embed.add_field(name='Categoria', value='High Elo' if objetivo['elo'] == 'high' else ('Low Elo' if objetivo['elo'] == 'low' else 'Sin asignar'), inline=True)
     embed.add_field(name='Posicion', value=posicion_txt, inline=True)
     embed.add_field(name='Rango actual', value=f'{objetivo["tier_actual"]} {objetivo["rank_actual"]}', inline=True)
-    embed.add_field(name='LP ganados', value=str(objetivo['lp_ganados']), inline=True)
-
+    embed.add_field(name='Escalado (progreso)', value=str(objetivo['escalado']), inline=True)
     embed.add_field(name='Bonus', value=f'+{objetivo["bonus"]}', inline=True)
     embed.add_field(name='Castigos', value=f'-{objetivo["castigos"]}', inline=True)
     embed.add_field(name='Tiempo en voz', value=f'{objetivo["tiempo_voz_min"]} min', inline=True)
     embed.add_field(name='Total', value=f'**{objetivo["total"]} pts**', inline=True)
-    embed.add_field(name='Escudos Azules', value=str(objetivo.get('escudos', 0)), inline=True)
+    embed.add_field(name='Escudos Azules', value=f'{objetivo.get("escudos", 0)}/{ESCUDOS_MAX_INVENTARIO}', inline=True)
+    aegis_txt = f'Activo - {objetivo["aegis_restante"]}h restantes' if objetivo['aegis_activo'] else 'Inactivo'
+    embed.add_field(name='Aegis (proteccion)', value=aegis_txt, inline=True)
     if objetivo.get('elo_previo'):
         embed.add_field(name='Elo previo declarado', value=objetivo['elo_previo'], inline=True)
     activas = maldiciones_activas_de(data)
-    malds_txt = '\n'.join(f'- {m["efecto"]}' for m in activas) or 'Ninguna'
+    malds_txt = '\n'.join(f'- {m["texto"]}' + (' (cumplido)' if m.get('cumplido') else ' (pendiente)') for m in activas) or 'Ninguna'
     embed.add_field(name=f'Maldiciones activas ({len(activas)}/{MALDICION_MAX_ACTIVAS})', value=malds_txt, inline=False)
     embed.add_field(name='Logros', value=logros_txt, inline=False)
+    await interaction.followup.send(embed=embed)
+
+
+@tree.command(name='reglamento', description='Muestra el reglamento completo del torneo SoloQ Challenge')
+async def reglamento(interaction: discord.Interaction):
+    embed = discord.Embed(
+        title='Reglamento - SoloQ Challenge',
+        description=f'Torneo interno de ganancia de rango en LoL (LAN). Duracion: {DURACION_TORNEO} dias. Premio principal: ${PREMIO_GANADOR_USD} + insignias de logro.',
+        color=0xf5c518,
+    )
+    embed.add_field(
+        name='1. Registro',
+        value=('Todos se registran con `/registrar nombre:Riot#TAG`. Toda cuenta inicia **sin categoria** '
+               '(pendiente). La Directiva revisa y asigna manualmente **High Elo** o **Low Elo** con `/clasificar`. '
+               'No hay auto-aprobacion: todas las cuentas pasan por revision.'),
+        inline=False)
+    embed.add_field(
+        name='2. Chat de voz obligatorio',
+        value=(f'Tus puntos solo cuentan si estuviste conectado al chat de voz del servidor (cualquier canal) al menos '
+               f'{VOZ_MINIMA_MINUTOS} min acumulados. Esto evita smurfeo/boosting sin supervision.'),
+        inline=False)
+    embed.add_field(
+        name='3. Puntaje',
+        value=('El ranking se calcula por **escalado de division/liga** (subir de Hierro a Bronce, de IV a III, etc.), '
+               'no solo por LP crudo. A esto se suman los Bonus otorgados por la Directiva y se restan los Castigos.'),
+        inline=False)
+    embed.add_field(
+        name='4. Escudos Azules y maldiciones (Blue Shell)',
+        value=(f'Se ganan por logros automaticos o hazanas otorgadas por la Directiva (`/otorgar_escudo`), maximo '
+               f'{ESCUDOS_MAX_INVENTARIO} en inventario. Con `/maldecir @jugador` gastas uno para lanzar un efecto '
+               f'aleatorio (hechizos fijos, campeon a elegir entre 3, rol aleatorio, baneo forzado, o rebote). '
+               f'Maximo {MALDICION_MAX_ACTIVAS} maldiciones activas por victima, duran {MALDICION_DURACION_HORAS}h, '
+               f'cooldown de {MALDICION_COOLDOWN_HORAS}h para volver a lanzar.'),
+        inline=False)
+    embed.add_field(
+        name='5. Aegis (proteccion)',
+        value=(f'Si un jugador acumula {CASTIGOS_PENDIENTES_PARA_AEGIS} maldiciones activas SIN cumplir, se activa '
+               f'automaticamente un Aegis de {AEGIS_DURACION_HORAS}h que lo protege de nuevas maldiciones.'),
+        inline=False)
+    embed.add_field(
+        name='6. Cumplimiento de castigos',
+        value=('La Directiva verifica que el castigo/maldicion se haya cumplido en partida y lo marca con '
+               '`/cumplir_castigo`. Los castigos sin marcar cuentan para activar el Aegis del jugador.'),
+        inline=False)
+    embed.add_field(
+        name='7. Premios',
+        value=(f'Ganador general: **${PREMIO_GANADOR_USD} USD** en efectivo + insignia/rol de honor en el servidor. '
+               'Tambien se otorgan insignias por logros (Cima, Podio, Ascenso, hitos de puntos, etc.).'),
+        inline=False)
+    embed.add_field(
+        name='8. Conducta',
+        value='Prohibido el uso de cuentas ajenas, boosting externo, o evadir la verificacion de voz. La Directiva puede descalificar por incumplimiento.',
+        inline=False)
+    embed.set_footer(text='Usa /ayuda para ver todos los comandos disponibles.')
+    await interaction.response.send_message(embed=embed)
+
+
+@tree.command(name='participantes', description='Lista a todos los jugadores registrados en el torneo')
+async def participantes(interaction: discord.Interaction):
+    await interaction.response.defer()
+    db = cargar_db()
+    validos = jugadores_validos(db)
+    if not validos:
+        await interaction.followup.send('Aun no hay participantes registrados.')
+        return
+    lineas = []
+    for data in sorted(validos.values(), key=lambda d: d.get('nombre', '')):
+        if not data.get('elo'):
+            cat = 'Sin clasificar'
+        elif data.get('estado') != 'aprobado':
+            cat = 'Pendiente de revision'
+        else:
+            cat = 'High Elo' if data['elo'] == 'high' else 'Low Elo'
+        lineas.append(f'- **{data["nombre"]}** - <@{data["discord_id"]}> - {cat}')
+
+    embed = discord.Embed(title=f'Participantes del torneo ({len(validos)})', color=0x5865F2)
+    bloque = ''
+    partes = []
+    for linea in lineas:
+        if len(bloque) + len(linea) + 1 > 1000:
+            partes.append(bloque)
+            bloque = ''
+        bloque += linea + '\n'
+    if bloque:
+        partes.append(bloque)
+    for i, parte in enumerate(partes[:5], 1):
+        embed.add_field(name=f'Lista {i}' if len(partes) > 1 else 'Lista', value=parte, inline=False)
     await interaction.followup.send(embed=embed)
 
 
@@ -639,7 +834,7 @@ async def mostrar_tabla(canal):
             mention = user.mention if user else j['nombre']
             embed.add_field(
                 name=f'{i}. {j["nombre"]}',
-                value=f'{mention} -> {j["total"]} pts (LP: {j["lp_ganados"]}, Bonus: +{j["bonus"]}, Castigos: -{j["castigos"]}, Voz: {j["tiempo_voz_min"]} min)',
+                value=f'{mention} -> {j["total"]} pts (Escalado: {j["escalado"]}, Bonus: +{j["bonus"]}, Castigos: -{j["castigos"]}, Voz: {j["tiempo_voz_min"]} min)',
                 inline=False
             )
     if low:
@@ -649,7 +844,7 @@ async def mostrar_tabla(canal):
             mention = user.mention if user else j['nombre']
             embed.add_field(
                 name=f'{i}. {j["nombre"]}',
-                value=f'{mention} -> {j["total"]} pts (LP: {j["lp_ganados"]}, Bonus: +{j["bonus"]}, Castigos: -{j["castigos"]}, Voz: {j["tiempo_voz_min"]} min)',
+                value=f'{mention} -> {j["total"]} pts (Escalado: {j["escalado"]}, Bonus: +{j["bonus"]}, Castigos: -{j["castigos"]}, Voz: {j["tiempo_voz_min"]} min)',
                 inline=False
             )
     if sin_voz:
@@ -658,9 +853,9 @@ async def mostrar_tabla(canal):
             faltante = round(VOZ_MINIMA_MINUTOS - j['tiempo_voz_min'], 1)
             embed.add_field(name=j['nombre'], value=f'Conectado {j["tiempo_voz_min"]} min - le faltan {faltante} min en voz', inline=False)
     if pendientes:
-        embed.add_field(name='Pendientes de revision (cuenta nueva)', value='​', inline=False)
+        embed.add_field(name='Pendientes de revision / clasificacion', value='​', inline=False)
         for j in pendientes:
-            embed.add_field(name=j['nombre'], value='Esperando aprobacion de la directiva (`/clasificar`)', inline=False)
+            embed.add_field(name=j['nombre'], value='Esperando clasificacion de la directiva (`/clasificar`)', inline=False)
     embed.set_footer(text=f'{calcular_estado_torneo(db)} - Web: ver enlace fijado')
     await canal.send(embed=embed)
     await procesar_logros_y_roles(canal, high, low, db)
@@ -672,22 +867,26 @@ async def ayuda(interaction: discord.Interaction):
                            description=calcular_estado_torneo(cargar_db()))
     embed.add_field(
         name='Jugadores',
-        value=('`/registrar` - Inscribete con tu Riot ID (Nombre#TAG). Opcional: declara tu elo previo\n'
-               '`/progreso` - Consulta tu propio avance de LP\n'
-               '`/perfil` - Tu tarjeta completa (posicion, logros, escudos, etc.)\n'
+        value=('`/registrar` - Inscribete con tu Riot ID (Nombre#TAG). Tu cuenta queda pendiente de clasificacion\n'
+               '`/progreso` - Consulta tu propio avance\n'
+               '`/perfil` - Tu tarjeta completa (posicion, logros, escudos, Aegis, etc.)\n'
                '`/tabla` - Muestra la clasificacion al instante\n'
+               '`/participantes` - Lista a todos los inscritos y su categoria\n'
+               '`/reglamento` - Muestra el reglamento completo del torneo\n'
                '`/escudos` - Ve tus Escudos Azules y maldiciones activas\n'
-               '`/maldecir` - Gasta un Escudo Azul y maldice a otro jugador al azar'),
+               '`/maldecir` - Gasta un Escudo Azul y maldice a otro jugador\n'
+               '`/elegir_campeon` - Elige tu campeon si te tocó maldicion de campeon'),
         inline=False
     )
     embed.add_field(
-        name='Administracion',
+        name=f'Directiva ({ROL_DIRECTIVA_NOMBRE} o Administrador)',
         value=('`/bonus` - Otorga puntos extra a un jugador\n'
-               '`/castigar` - Aplica una penalizacion\n'
-               '`/otorgar_escudo` - Da un Escudo Azul por una hazana (Primera Sangre, Penta, etc.)\n'
+               '`/castigar` - Aplica una penalizacion manual\n'
+               '`/otorgar_escudo` - Da un Escudo Azul por una hazana\n'
+               '`/cumplir_castigo` - Marca la maldicion mas antigua sin cumplir de un jugador como cumplida\n'
                '`/historial` - Revisa el historial de cambios de un jugador\n'
-               '`/pendientes` - Lista cuentas nuevas esperando revision (con elo previo declarado)\n'
-               '`/clasificar` - Aprueba y asigna categoria a una cuenta pendiente\n'
+               '`/pendientes` - Lista cuentas esperando clasificacion\n'
+               '`/clasificar` - Asigna categoria (High/Low Elo) a una cuenta pendiente\n'
                '`/iniciar_torneo` - Comienza oficialmente el torneo y reinicia el progreso de pruebas\n'
                '`/reiniciar_registro` - PELIGRO: borra todo para reiniciar con cuentas nuevas'),
         inline=False
@@ -699,9 +898,10 @@ async def ayuda(interaction: discord.Interaction):
     )
     embed.add_field(
         name='Escudos Azules (maldiciones)',
-        value=(f'Se ganan al desbloquear logros o por hazanas dentro del juego (la directiva las otorga). '
-               f'Usa `/maldecir` para gastar uno y aplicar un efecto aleatorio a otro jugador (~1 de cada 3 rebota). '
-               f'Maximo {MALDICION_MAX_ACTIVAS} maldiciones activas por victima, cooldown de {MALDICION_COOLDOWN_HORAS}h por lanzador.'),
+        value=(f'Se ganan al desbloquear logros o por hazanas dentro del juego (la directiva las otorga), maximo '
+               f'{ESCUDOS_MAX_INVENTARIO} en inventario. Usa `/maldecir` para gastar uno. Maximo {MALDICION_MAX_ACTIVAS} '
+               f'maldiciones activas por victima, cooldown de {MALDICION_COOLDOWN_HORAS}h. Si acumulas '
+               f'{CASTIGOS_PENDIENTES_PARA_AEGIS} sin cumplir se activa un Aegis (proteccion) de {AEGIS_DURACION_HORAS}h.'),
         inline=False
     )
     embed.add_field(
@@ -713,31 +913,33 @@ async def ayuda(interaction: discord.Interaction):
     await interaction.response.send_message(embed=embed)
 
 
-@tree.command(name='pendientes', description='(Admin) Lista cuentas pendientes de revision')
-@app_commands.default_permissions(administrator=True)
+@tree.command(name='pendientes', description='(Directiva) Lista cuentas pendientes de clasificacion')
 async def pendientes(interaction: discord.Interaction):
+    if not await requiere_directiva(interaction):
+        return
     await interaction.response.defer()
     db = cargar_db()
     _, _, pend, _ = calcular_tabla(db)
     if not pend:
-        await interaction.followup.send('No hay cuentas pendientes de revision.')
+        await interaction.followup.send('No hay cuentas pendientes de clasificacion.')
         return
-    mensaje = '**Cuentas pendientes:**\n'
+    mensaje = '**Cuentas pendientes de clasificacion:**\n'
     for j in pend:
         extra = f' - elo previo declarado: **{j["elo_previo"]}**' if j.get('elo_previo') else ''
         mensaje += f'- **{j["nombre"]}** - {j["tier_actual"]} {j["rank_actual"]} - <@{j["discord_id"]}>{extra}\n'
-    mensaje += '\nUsa `/clasificar usuario:@jugador categoria:low|high` para aprobar.'
+    mensaje += '\nUsa `/clasificar usuario:@jugador categoria:low|high` para clasificar.'
     await interaction.followup.send(mensaje)
 
 
-@tree.command(name='clasificar', description='(Admin) Aprueba una cuenta pendiente y define su categoria')
-@app_commands.describe(usuario='Jugador a aprobar', categoria='low o high')
+@tree.command(name='clasificar', description='(Directiva) Asigna categoria High/Low Elo a una cuenta pendiente')
+@app_commands.describe(usuario='Jugador a clasificar', categoria='low o high')
 @app_commands.choices(categoria=[
     app_commands.Choice(name='Low Elo', value='low'),
     app_commands.Choice(name='High Elo', value='high'),
 ])
-@app_commands.default_permissions(administrator=True)
 async def clasificar(interaction: discord.Interaction, usuario: discord.Member, categoria: app_commands.Choice[str]):
+    if not await requiere_directiva(interaction):
+        return
     await interaction.response.defer()
     db = cargar_db()
     for puuid, data in jugadores_validos(db).items():
@@ -746,13 +948,12 @@ async def clasificar(interaction: discord.Interaction, usuario: discord.Member, 
             data['elo'] = categoria.value
             guardar_db(db)
             await interaction.followup.send(
-                f'**{data["nombre"]}** aprobado y clasificado en **{"High" if categoria.value == "high" else "Low"} Elo**. Ya aparece en la tabla (si cumple el requisito de voz).')
+                f'**{data["nombre"]}** clasificado en **{"High" if categoria.value == "high" else "Low"} Elo**. Ya aparece en la tabla (si cumple el requisito de voz).')
             return
     await interaction.followup.send('Usuario no encontrado en el torneo.')
 
 
 @tree.command(name='escudos', description='Consulta tus Escudos Azules y maldiciones activas')
-
 async def escudos(interaction: discord.Interaction):
     await interaction.response.defer()
     user_id = str(interaction.user.id)
@@ -760,13 +961,18 @@ async def escudos(interaction: discord.Interaction):
     for puuid, data in jugadores_validos(db).items():
         if data['discord_id'] == user_id:
             activas = maldiciones_activas_de(data)
-            malds_txt = '\n'.join(f'- {m["efecto"]} (de <@{m["de"]}>)' for m in activas) or 'Ninguna'
+            malds_txt = '\n'.join(
+                f'- {m["texto"]} (de <@{m["de"]}>)' + (' [cumplido]' if m.get('cumplido') else ' [pendiente]')
+                for m in activas
+            ) or 'Ninguna'
             restante_cd = tiempo_restante_cooldown(data)
             cd_txt = 'Disponible' if restante_cd <= 0 else f'{round(restante_cd, 1)} h restantes'
+            aegis_txt = f'Activo - {round(aegis_restante_horas(data), 1)}h restantes (nadie puede maldecirte)' if aegis_activo(data) else 'Inactivo'
             await interaction.followup.send(
                 f'**{data["nombre"]}**\n'
-                f'Escudos Azules disponibles: **{data.get("escudos", 0)}**\n'
+                f'Escudos Azules disponibles: **{data.get("escudos", 0)}/{ESCUDOS_MAX_INVENTARIO}**\n'
                 f'Cooldown para lanzar: {cd_txt}\n'
+                f'Aegis (proteccion): {aegis_txt}\n'
                 f'Maldiciones activas sobre ti ({len(activas)}/{MALDICION_MAX_ACTIVAS}):\n{malds_txt}'
             )
             return
@@ -801,6 +1007,10 @@ async def maldecir(interaction: discord.Interaction, usuario: discord.Member):
     if target_data is None or target_data.get('estado') != 'aprobado':
         await interaction.followup.send('Ese jugador no esta registrado/aprobado en el torneo.')
         return
+    if aegis_activo(target_data):
+        await interaction.followup.send(
+            f'**{target_data["nombre"]}** tiene un Aegis activo ({round(aegis_restante_horas(target_data), 1)}h restantes) y no puede ser maldecido.')
+        return
     if caster_data.get('escudos', 0) <= 0:
         await interaction.followup.send('No tienes Escudos Azules disponibles. Ganalos desbloqueando logros o pidiendole uno a la directiva por una hazana.')
         return
@@ -809,17 +1019,22 @@ async def maldecir(interaction: discord.Interaction, usuario: discord.Member):
         await interaction.followup.send(f'Debes esperar {round(restante_cd, 1)} horas mas para volver a lanzar una maldicion.')
         return
 
-    efecto = random.choice(EFECTOS_MALDICION)
-    es_rebote_lanzador = efecto.startswith('COMODIN - Rebote:')
-    es_rebote_random = efecto.startswith('COMODIN - Rebote al azar')
-
+    efecto = generar_efecto_maldicion()
     destino_puuid, destino_data = target_puuid, target_data
-    if es_rebote_lanzador:
+    if efecto['tipo'] == 'rebote_lanzador':
         destino_puuid, destino_data = caster_puuid, caster_data
-    elif es_rebote_random:
+    elif efecto['tipo'] == 'rebote_random':
         candidatos = [(p, d) for p, d in valid.items() if d.get('estado') == 'aprobado' and d['discord_id'] != caster_id]
         if candidatos:
             destino_puuid, destino_data = random.choice(candidatos)
+
+    if aegis_activo(destino_data):
+        await interaction.followup.send(
+            f'La maldicion iba a rebotar hacia **{destino_data["nombre"]}**, pero tiene un Aegis activo y la maldicion se disipa. Se consumio tu escudo igualmente.')
+        caster_data['escudos'] = caster_data.get('escudos', 0) - 1
+        caster_data['ultimo_escudo_uso'] = str(datetime.datetime.now())
+        guardar_db(db)
+        return
 
     if len(maldiciones_activas_de(destino_data)) >= MALDICION_MAX_ACTIVAS:
         await interaction.followup.send(
@@ -830,37 +1045,119 @@ async def maldecir(interaction: discord.Interaction, usuario: discord.Member):
     ahora = str(datetime.datetime.now())
     caster_data['escudos'] = caster_data.get('escudos', 0) - 1
     caster_data['ultimo_escudo_uso'] = ahora
-    destino_data.setdefault('maldiciones', []).append({'efecto': efecto, 'de': caster_id, 'fecha': ahora})
+    destino_data.setdefault('maldiciones', []).append({
+        'tipo': efecto['tipo'], 'texto': efecto['texto'], 'opciones': efecto['opciones'],
+        'elegido': efecto['elegido'], 'de': caster_id, 'fecha': ahora, 'cumplido': False,
+    })
+
+    # Aegis: si el destino acumula demasiados castigos activos sin cumplir, se protege temporalmente.
+    pendientes_destino = castigos_pendientes_de(destino_data)
+    aegis_otorgado = False
+    if len(pendientes_destino) >= CASTIGOS_PENDIENTES_PARA_AEGIS:
+        destino_data['escudo_hasta'] = str(datetime.datetime.now() + datetime.timedelta(hours=AEGIS_DURACION_HORAS))
+        aegis_otorgado = True
+
     guardar_db(db)
 
     embed = discord.Embed(title='Maldicion lanzada!', color=0x9b59b6, timestamp=datetime.datetime.now())
     embed.add_field(name='Lanzada por', value=f'<@{caster_id}>', inline=True)
     embed.add_field(name='Objetivo final', value=f'**{destino_data["nombre"]}**', inline=True)
-    embed.add_field(name='Efecto', value=efecto, inline=False)
+    if efecto['tipo'] == 'campeon':
+        opciones_txt = ', '.join(efecto['opciones'])
+        embed.add_field(name='Efecto', value=f'{efecto["texto"]}\nOpciones: **{opciones_txt}**', inline=False)
+        embed.set_thumbnail(url=icono_campeon(efecto['opciones'][0]))
+    else:
+        embed.add_field(name='Efecto', value=efecto['texto'], inline=False)
     embed.set_footer(text=f'Dura {MALDICION_DURACION_HORAS}h - Maximo {MALDICION_MAX_ACTIVAS} activas por jugador - Cooldown de lanzamiento: {MALDICION_COOLDOWN_HORAS}h')
     await interaction.followup.send(embed=embed)
+    if aegis_otorgado:
+        await interaction.followup.send(
+            f'**{destino_data["nombre"]}** acumulo {CASTIGOS_PENDIENTES_PARA_AEGIS} maldiciones sin cumplir: '
+            f'se activo su **Aegis** por {AEGIS_DURACION_HORAS}h. Nadie podra maldecirlo mientras dure.')
 
 
-@tree.command(name='otorgar_escudo', description='(Admin) Otorga un Escudo Azul por una hazana dentro del juego')
-@app_commands.describe(usuario='Jugador a premiar', motivo='ej. Primera Sangre, Penta Kill, Ace')
-@app_commands.default_permissions(administrator=True)
-async def otorgar_escudo(interaction: discord.Interaction, usuario: discord.Member, motivo: str = ""):
+@tree.command(name='elegir_campeon', description='Elige tu campeon si te toco una maldicion de campeon aleatorio')
+@app_commands.describe(campeon='El campeon que eliges entre las opciones dadas')
+async def elegir_campeon(interaction: discord.Interaction, campeon: str):
+    await interaction.response.defer()
+    user_id = str(interaction.user.id)
+    db = cargar_db()
+    for puuid, data in jugadores_validos(db).items():
+        if data['discord_id'] != user_id:
+            continue
+        pendiente = None
+        for m in maldiciones_activas_de(data):
+            if m.get('tipo') == 'campeon' and not m.get('elegido'):
+                pendiente = m
+                break
+        if pendiente is None:
+            await interaction.followup.send('No tienes ninguna maldicion de campeon pendiente por elegir.')
+            return
+        opciones_norm = {o.lower(): o for o in pendiente['opciones']}
+        if campeon.lower() not in opciones_norm:
+            await interaction.followup.send(f'Debes elegir uno de estos: **{", ".join(pendiente["opciones"])}**.')
+            return
+        elegido = opciones_norm[campeon.lower()]
+        pendiente['elegido'] = elegido
+        guardar_db(db)
+        embed = discord.Embed(title='Campeon elegido', description=f'**{data["nombre"]}** jugara **{elegido}** en su proxima partida.', color=0x9b59b6)
+        embed.set_thumbnail(url=icono_campeon(elegido))
+        await interaction.followup.send(embed=embed)
+        return
+    await interaction.followup.send('No estas registrado.')
+
+
+@tree.command(name='cumplir_castigo', description='(Directiva) Marca la maldicion mas antigua sin cumplir de un jugador como cumplida')
+@app_commands.describe(usuario='Jugador que cumplio su castigo')
+async def cumplir_castigo(interaction: discord.Interaction, usuario: discord.Member):
+    if not await requiere_directiva(interaction):
+        return
     await interaction.response.defer()
     db = cargar_db()
     for puuid, data in jugadores_validos(db).items():
         if data['discord_id'] == str(usuario.id):
-            data['escudos'] = data.get('escudos', 0) + 1
+            pendientes_j = castigos_pendientes_de(data)
+            if not pendientes_j:
+                await interaction.followup.send(f'**{data["nombre"]}** no tiene castigos pendientes por cumplir.')
+                return
+            # marca la mas antigua
+            pendientes_j.sort(key=lambda m: m.get('fecha', ''))
+            objetivo = pendientes_j[0]
+            for m in data.get('maldiciones', []):
+                if m is objetivo or (m.get('fecha') == objetivo.get('fecha') and m.get('texto') == objetivo.get('texto')):
+                    m['cumplido'] = True
+                    break
             guardar_db(db)
-            await interaction.followup.send(
-                f'**{data["nombre"]}** recibio un Escudo Azul. Motivo: {motivo or "N/A"}. Total: {data["escudos"]}.')
+            await interaction.followup.send(f'Castigo de **{data["nombre"]}** marcado como cumplido: "{objetivo["texto"]}"')
             return
     await interaction.followup.send('Usuario no encontrado en el torneo.')
 
 
-@tree.command(name='reiniciar_registro', description='(Admin) PELIGRO: borra TODOS los registros para empezar con cuentas nuevas')
+@tree.command(name='otorgar_escudo', description='(Directiva) Otorga un Escudo Azul por una hazana dentro del juego')
+@app_commands.describe(usuario='Jugador a premiar', motivo='ej. Primera Sangre, Penta Kill, Ace')
+async def otorgar_escudo(interaction: discord.Interaction, usuario: discord.Member, motivo: str = ""):
+    if not await requiere_directiva(interaction):
+        return
+    await interaction.response.defer()
+    db = cargar_db()
+    for puuid, data in jugadores_validos(db).items():
+        if data['discord_id'] == str(usuario.id):
+            if data.get('escudos', 0) >= ESCUDOS_MAX_INVENTARIO:
+                await interaction.followup.send(f'**{data["nombre"]}** ya tiene el maximo de {ESCUDOS_MAX_INVENTARIO} Escudos Azules en inventario.')
+                return
+            data['escudos'] = data.get('escudos', 0) + 1
+            guardar_db(db)
+            await interaction.followup.send(
+                f'**{data["nombre"]}** recibio un Escudo Azul. Motivo: {motivo or "N/A"}. Total: {data["escudos"]}/{ESCUDOS_MAX_INVENTARIO}.')
+            return
+    await interaction.followup.send('Usuario no encontrado en el torneo.')
+
+
+@tree.command(name='reiniciar_registro', description='(Directiva) PELIGRO: borra TODOS los registros para empezar con cuentas nuevas')
 @app_commands.describe(confirmar='Escribe SI (mayusculas) para confirmar el borrado total')
-@app_commands.default_permissions(administrator=True)
 async def reiniciar_registro(interaction: discord.Interaction, confirmar: str):
+    if not await requiere_directiva(interaction):
+        return
     await interaction.response.defer()
     if confirmar != 'SI':
         await interaction.followup.send(
@@ -873,9 +1170,10 @@ async def reiniciar_registro(interaction: discord.Interaction, confirmar: str):
         '(pueden usar `elo_previo` para que la directiva sepa su nivel real al revisar).')
 
 
-@tree.command(name='iniciar_torneo', description='(Admin) Inicia oficialmente el torneo y reinicia el progreso de pruebas')
-@app_commands.default_permissions(administrator=True)
+@tree.command(name='iniciar_torneo', description='(Directiva) Inicia oficialmente el torneo y reinicia el progreso de pruebas')
 async def iniciar_torneo(interaction: discord.Interaction):
+    if not await requiere_directiva(interaction):
+        return
     await interaction.response.defer()
     db = cargar_db()
     ahora = datetime.datetime.now()
@@ -898,19 +1196,19 @@ async def iniciar_torneo(interaction: discord.Interaction):
     guardar_db(db)
     await interaction.followup.send(
         f'Torneo iniciado oficialmente. Se reinicio el progreso de {contador} jugadores aprobados '
-        f'(el conteo de LP arranca desde ahora, el tiempo de voz acumulado se conserva). Dura {DURACION_TORNEO} dias.')
+        f'(el conteo de escalado arranca desde ahora, el tiempo de voz acumulado se conserva). Dura {DURACION_TORNEO} dias.')
     if CANAL_CLASIFICACION_ID != 0:
         canal = client.get_channel(CANAL_CLASIFICACION_ID)
         if canal:
             await canal.send('**EL TORNEO HA COMENZADO OFICIALMENTE!** Buena suerte a todos.')
-
             await mostrar_tabla(canal)
 
 
-@tree.command(name='castigar', description='(Admin) Resta puntos a un jugador')
+@tree.command(name='castigar', description='(Directiva) Resta puntos a un jugador')
 @app_commands.describe(usuario='Jugador a castigar', puntos='Puntos a restar', motivo='Razon del castigo')
-@app_commands.default_permissions(administrator=True)
 async def castigar(interaction: discord.Interaction, usuario: discord.Member, puntos: int, motivo: str = ""):
+    if not await requiere_directiva(interaction):
+        return
     await interaction.response.defer()
     if puntos <= 0:
         await interaction.followup.send('Los puntos deben ser positivos.')
@@ -934,10 +1232,11 @@ async def castigar(interaction: discord.Interaction, usuario: discord.Member, pu
     await interaction.followup.send('Usuario no encontrado en el torneo.')
 
 
-@tree.command(name='bonus', description='(Admin) Otorga puntos extra a un jugador')
+@tree.command(name='bonus', description='(Directiva) Otorga puntos extra a un jugador')
 @app_commands.describe(usuario='Jugador a bonificar', puntos='Puntos a sumar', motivo='Razon (ej. Penta, Primera Sangre)')
-@app_commands.default_permissions(administrator=True)
 async def bonus(interaction: discord.Interaction, usuario: discord.Member, puntos: int, motivo: str = ""):
+    if not await requiere_directiva(interaction):
+        return
     await interaction.response.defer()
     if puntos <= 0:
         await interaction.followup.send('Los puntos deben ser positivos.')
@@ -961,10 +1260,11 @@ async def bonus(interaction: discord.Interaction, usuario: discord.Member, punto
     await interaction.followup.send('Usuario no encontrado en el torneo.')
 
 
-@tree.command(name='historial', description='(Admin) Ver historial de bonus y castigos')
+@tree.command(name='historial', description='(Directiva) Ver historial de bonus y castigos')
 @app_commands.describe(usuario='Jugador')
-@app_commands.default_permissions(administrator=True)
 async def historial(interaction: discord.Interaction, usuario: discord.Member):
+    if not await requiere_directiva(interaction):
+        return
     await interaction.response.defer()
     registros = cargar_registros()
     filtrados = [r for r in registros if r['usuario'] == str(usuario.id)]
@@ -1051,16 +1351,16 @@ PAGINA_HTML = """
   header h1 { margin:0; font-size:2.8em; color:#f5c518; letter-spacing:1px; text-shadow:0 0 20px rgba(245,197,24,0.4); }
   header p { color:#9ca3af; margin-top:8px; }
   .estado { display:inline-block; margin-top:16px; padding:8px 18px; background:#1f2937; border:1px solid #f5c518; border-radius:20px; color:#f5c518; font-weight:bold; font-size:0.9em; }
+  .premio { display:inline-block; margin-top:10px; margin-left:10px; padding:8px 18px; background:#132a1c; border:1px solid #3ba55d; border-radius:20px; color:#3ba55d; font-weight:bold; font-size:0.9em; }
   .stats { display:flex; justify-content:center; gap:16px; margin-top:24px; flex-wrap:wrap; }
   .stat-card { background:#161b22; border-radius:10px; padding:14px 22px; min-width:120px; text-align:center; border:1px solid #2a2f3a; }
   .stat-card .num { font-size:1.6em; color:#f5c518; font-weight:bold; }
   .stat-card .label { font-size:0.75em; color:#9ca3af; text-transform:uppercase; letter-spacing:1px; }
-  .contenedor { max-width:1000px; margin:30px auto; padding:0 20px; }
+  .contenedor { max-width:1100px; margin:30px auto; padding:0 20px; }
   .categoria { margin-bottom:40px; }
   .categoria h2 { border-left:5px solid #f5c518; padding-left:12px; font-size:1.4em; }
   table { width:100%; border-collapse:collapse; background:#161b22; border-radius:8px; overflow:hidden; }
   th, td { padding:12px 14px; text-align:left; border-bottom:1px solid #2a2f3a; }
-
   th { background:#1f2530; color:#f5c518; text-transform:uppercase; font-size:0.8em; letter-spacing:1px; }
   tr:hover { background:#1c2230; }
   .pos1 { color:#f5c518; font-weight:bold; }
@@ -1070,37 +1370,41 @@ PAGINA_HTML = """
   .voz-no { color:#ed4245; }
   .vacio { color:#6b7280; padding:20px; text-align:center; }
   .aviso { background:#1f2937; border-left:4px solid #f5c518; padding:14px 18px; border-radius:6px; margin-bottom:20px; color:#d1d5db; }
+  .badge-aegis { display:inline-block; padding:2px 8px; border-radius:10px; font-size:0.75em; font-weight:bold; background:#132a1c; color:#3ba55d; border:1px solid #3ba55d; }
+  .badge-shell { display:inline-block; padding:2px 8px; border-radius:10px; font-size:0.75em; font-weight:bold; background:#241a33; color:#9b59b6; border:1px solid #9b59b6; margin-left:4px; }
+  .champ-icon { width:28px; height:28px; border-radius:50%; vertical-align:middle; margin-right:6px; border:1px solid #f5c518; }
   footer { text-align:center; color:#6b7280; margin-top:40px; font-size:0.85em; }
 </style>
 </head>
 <body>
 <header>
   <h1>SoloQ Challenge</h1>
-  <p>Torneo de ganancia de LP - {{ duracion }} dias</p>
+  <p>Torneo de escalado de division/liga - {{ duracion }} dias</p>
   <div class="estado">{{ estado_torneo }}</div>
+  <div class="premio">Premio: ${{ premio }} USD + insignias</div>
   <div class="stats">
     <div class="stat-card"><div class="num">{{ high|length + low|length }}</div><div class="label">Jugadores activos</div></div>
-    <div class="stat-card"><div class="num">{{ pendientes|length }}</div><div class="label">Pendientes de revision</div></div>
+    <div class="stat-card"><div class="num">{{ pendientes|length }}</div><div class="label">Pendientes de clasificacion</div></div>
     <div class="stat-card"><div class="num">{{ sin_voz|length }}</div><div class="label">Sin verificar voz</div></div>
   </div>
 </header>
 <div class="contenedor">
-  <div class="aviso">Para que tus puntos sean validos debes conectarte al chat de voz del servidor de Discord (cualquier canal) mientras juegas tus partidas.</div>
+  <div class="aviso">Para que tus puntos sean validos debes conectarte al chat de voz del servidor de Discord (cualquier canal) mientras juegas tus partidas. El ranking se basa en escalar de division/liga (Blue Shell / Escudos Azules / Aegis activos).</div>
   <div class="categoria">
     <h2>High Elo</h2>
     {% if high %}
     <table>
-      <tr><th>#</th><th>Jugador</th><th>Rango actual</th><th>LP ganados</th><th>Bonus</th><th>Castigos</th><th>Voz</th><th>Escudos</th><th>Total</th></tr>
+      <tr><th>#</th><th>Jugador</th><th>Rango actual</th><th>Escalado</th><th>Bonus</th><th>Castigos</th><th>Voz</th><th>Escudos / Aegis</th><th>Total</th></tr>
       {% for j in high %}
       <tr>
         <td class="{{ 'pos1' if loop.index==1 else ('pos2' if loop.index==2 else ('pos3' if loop.index==3 else '')) }}">{{ loop.index }}</td>
         <td>{{ j.nombre }}</td>
         <td>{{ j.tier_actual }} {{ j.rank_actual }}</td>
-        <td>{{ j.lp_ganados }}</td>
+        <td>{{ j.escalado }}</td>
         <td>+{{ j.bonus }}</td>
         <td>-{{ j.castigos }}</td>
         <td class="voz-ok">{{ j.tiempo_voz_min }} min</td>
-        <td>{{ j.escudos }}</td>
+        <td><span class="badge-shell">{{ j.escudos }} escudo(s)</span>{% if j.aegis_activo %}<span class="badge-aegis">Aegis {{ j.aegis_restante }}h</span>{% endif %}</td>
         <td><b>{{ j.total }}</b></td>
       </tr>
       {% endfor %}
@@ -1113,17 +1417,17 @@ PAGINA_HTML = """
     <h2>Low Elo</h2>
     {% if low %}
     <table>
-      <tr><th>#</th><th>Jugador</th><th>Rango actual</th><th>LP ganados</th><th>Bonus</th><th>Castigos</th><th>Voz</th><th>Escudos</th><th>Total</th></tr>
+      <tr><th>#</th><th>Jugador</th><th>Rango actual</th><th>Escalado</th><th>Bonus</th><th>Castigos</th><th>Voz</th><th>Escudos / Aegis</th><th>Total</th></tr>
       {% for j in low %}
       <tr>
         <td class="{{ 'pos1' if loop.index==1 else ('pos2' if loop.index==2 else ('pos3' if loop.index==3 else '')) }}">{{ loop.index }}</td>
         <td>{{ j.nombre }}</td>
         <td>{{ j.tier_actual }} {{ j.rank_actual }}</td>
-        <td>{{ j.lp_ganados }}</td>
+        <td>{{ j.escalado }}</td>
         <td>+{{ j.bonus }}</td>
         <td>-{{ j.castigos }}</td>
         <td class="voz-ok">{{ j.tiempo_voz_min }} min</td>
-        <td>{{ j.escudos }}</td>
+        <td><span class="badge-shell">{{ j.escudos }} escudo(s)</span>{% if j.aegis_activo %}<span class="badge-aegis">Aegis {{ j.aegis_restante }}h</span>{% endif %}</td>
         <td><b>{{ j.total }}</b></td>
       </tr>
       {% endfor %}
@@ -1143,6 +1447,17 @@ PAGINA_HTML = """
     </table>
   </div>
   {% endif %}
+  {% if pendientes %}
+  <div class="categoria">
+    <h2>Pendientes de clasificacion (Directiva)</h2>
+    <table>
+      <tr><th>Jugador</th><th>Rango actual</th><th>Elo previo declarado</th></tr>
+      {% for j in pendientes %}
+      <tr><td>{{ j.nombre }}</td><td>{{ j.tier_actual }} {{ j.rank_actual }}</td><td>{{ j.elo_previo or '-' }}</td></tr>
+      {% endfor %}
+    </table>
+  </div>
+  {% endif %}
 </div>
 <footer>Actualizado automaticamente - Pagina se refresca cada 60 segundos</footer>
 </body>
@@ -1155,7 +1470,8 @@ def home():
     db = cargar_db()
     high, low, pendientes, sin_voz = calcular_tabla(db)
     return render_template_string(PAGINA_HTML, high=high, low=low, pendientes=pendientes, sin_voz=sin_voz,
-                                   duracion=DURACION_TORNEO, estado_torneo=calcular_estado_torneo(db))
+                                   duracion=DURACION_TORNEO, estado_torneo=calcular_estado_torneo(db),
+                                   premio=PREMIO_GANADOR_USD)
 
 
 @app.route('/api/tabla')
