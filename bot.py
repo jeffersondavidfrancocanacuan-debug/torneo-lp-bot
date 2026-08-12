@@ -18,6 +18,7 @@ JUEGOS_MINIMOS_CUENTA = int(os.environ.get('JUEGOS_MINIMOS_CUENTA', '15'))
 VOZ_MINIMA_MINUTOS = float(os.environ.get('VOZ_MINIMA_MINUTOS', '1'))
 FECHA_INICIO_TORNEO = os.environ.get('FECHA_INICIO_TORNEO', '2026-08-14T00:00:00')
 PREMIO_GANADOR_USD = os.environ.get('PREMIO_GANADOR_USD', '100')
+DROP_DIARIO_ACTIVO_DEFAULT = os.environ.get('DROP_DIARIO_ACTIVO', 'false').strip().lower() in ('true', '1', 'si', 'sí')
 # =================================================
 
 intents = discord.Intents.default()
@@ -72,12 +73,44 @@ LOGROS = {
 }
 
 # ------------------- ESCUDOS AZULES (maldiciones estilo Blue Shell) -------------------
-MALDICION_COOLDOWN_HORAS = 24
 MALDICION_MAX_ACTIVAS = 3
 MALDICION_DURACION_HORAS = 24
 ESCUDOS_MAX_INVENTARIO = 3          # maximo de Escudos Azules que un jugador puede acumular
 CASTIGOS_PENDIENTES_PARA_AEGIS = 3  # castigos SIN cumplir recibidos que activan el Aegis
 AEGIS_DURACION_HORAS = 24           # proteccion temporal tras activar el Aegis
+POSTPARTIDA_GRACIA_MINUTOS = 10     # minutos tras terminar una partida en los que no se puede lanzar
+TORNEO_BLOQUEO_FINAL_HORAS = 48     # ultimas horas del torneo en las que el sistema Blue Shell se desactiva
+DROP_DIARIO_INTERVALO_MIN = 10      # frecuencia de revision de partidas para escudos automaticos
+
+
+def cooldown_recepcion_horas(posicion):
+    """Cooldown (horas) antes de poder volver a maldecir a alguien, segun su posicion en la tabla.
+    Top1: sin cooldown. Top2: 4h. Top3-5: 6h. Resto (o sin clasificar): 12h."""
+    if posicion == 1:
+        return 0
+    if posicion == 2:
+        return 4
+    if posicion in (3, 4, 5):
+        return 6
+    return 12
+
+
+def probabilidad_reverse(posicion):
+    """Probabilidad de que la maldicion rebote hacia quien la lanzo, segun la posicion del objetivo.
+    Cuanto mas abajo este el objetivo, mas facil es que rebote (tirar hacia arriba es mas seguro)."""
+    tabla = {1: 0.01, 2: 0.02, 3: 0.03, 4: 0.04, 5: 0.05}
+    return tabla.get(posicion, 0.15)
+
+
+def posicion_de_jugador(db, puuid):
+    """Posicion (1-indexed) del jugador en su categoria (High/Low Elo) segun la tabla actual.
+    Devuelve None si no aparece en ninguna tabla (pendiente, sin voz, etc.) -> se trata como 'resto'."""
+    high, low, _, _ = calcular_tabla(db)
+    for lista in (high, low):
+        for i, j in enumerate(lista, 1):
+            if j['puuid'] == puuid:
+                return i
+    return None
 
 DDRAGON_VERSION = '14.23.1'
 CAMPEONES_POOL = [
@@ -92,9 +125,16 @@ def icono_campeon(nombre):
     return f'https://ddragon.leagueoflegends.com/cdn/{DDRAGON_VERSION}/img/champion/{n}.png'
 
 
-def generar_efecto_maldicion():
-    """Devuelve un dict {tipo, texto, opciones} representando el efecto de la maldicion."""
-    tipo = random.choice(['hechizos', 'campeon', 'rol', 'baneo', 'rebote_lanzador', 'rebote_random'])
+def generar_efecto_maldicion(posicion_objetivo=None):
+    """Devuelve un dict {tipo, texto, opciones} representando el efecto de la maldicion.
+    Primero se sortea el Reverse segun la posicion del objetivo; si no sale, se sortea un efecto normal."""
+    if random.random() < probabilidad_reverse(posicion_objetivo):
+        return {
+            'tipo': 'reverse',
+            'texto': 'REVERSE: la maldicion rebota. El castigo lo cumple quien la lanzo, no el objetivo.',
+            'opciones': [], 'elegido': None,
+        }
+    tipo = random.choice(['hechizos', 'campeon', 'rol', 'baneo'])
     if tipo == 'campeon':
         opciones = random.sample(CAMPEONES_POOL, 3)
         return {
@@ -107,8 +147,6 @@ def generar_efecto_maldicion():
         'hechizos': 'Hechizos de invocador obligatorios: solo Flash + Ignite en tu proxima partida.',
         'rol': 'Rol/posicion aleatoria obligatoria en tu proxima partida.',
         'baneo': 'Debes banear el campeon que te pida quien te maldijo en tu proxima partida.',
-        'rebote_lanzador': 'COMODIN - Rebote: la maldicion vuelve a quien te la lanzo.',
-        'rebote_random': 'COMODIN - Rebote al azar: la maldicion salta a otro jugador random del torneo.',
     }
     return {'tipo': tipo, 'texto': textos[tipo], 'opciones': [], 'elegido': None}
 
@@ -126,6 +164,8 @@ JUGADORES_HEADERS = [
     'puuid', 'discord_id', 'nombre', 'region', 'lp_inicial', 'tier_inicial', 'rank_inicial',
     'elo', 'estado', 'fecha_registro', 'bonus_total', 'castigos_total', 'logros',
     'tiempo_voz_min', 'elo_previo', 'escudos', 'maldiciones', 'ultimo_escudo_uso', 'escudo_hasta',
+    'ultima_maldicion_recibida', 'ultimo_match_procesado', 'racha_victorias',
+    'campeones_ganados', 'victorias_con_castigo_contador',
 ]
 META_HEADERS = ['clave', 'valor']
 REGISTROS_HEADERS = ['tipo', 'usuario', 'nombre', 'puntos', 'motivo', 'fecha']
@@ -190,6 +230,10 @@ def cargar_db():
                 m.setdefault('tipo', 'legacy')
                 m.setdefault('opciones', [])
                 m.setdefault('elegido', None)
+            try:
+                campeones_ganados = json.loads(f.get('campeones_ganados') or '{}')
+            except Exception:
+                campeones_ganados = {}
             db[puuid] = {
                 'discord_id': f.get('discord_id', ''),
                 'nombre': f.get('nombre', ''),
@@ -209,6 +253,11 @@ def cargar_db():
                 'maldiciones': maldiciones,
                 'ultimo_escudo_uso': f.get('ultimo_escudo_uso', ''),
                 'escudo_hasta': f.get('escudo_hasta', ''),
+                'ultima_maldicion_recibida': f.get('ultima_maldicion_recibida', ''),
+                'ultimo_match_procesado': f.get('ultimo_match_procesado', ''),
+                'racha_victorias': int(float(f.get('racha_victorias') or 0)),
+                'campeones_ganados': campeones_ganados,
+                'victorias_con_castigo_contador': int(float(f.get('victorias_con_castigo_contador') or 0)),
             }
         meta_ws = _get_or_create_worksheet('meta', META_HEADERS)
         for fila in meta_ws.get_all_records(numericise_ignore=['all']):
@@ -218,6 +267,14 @@ def cargar_db():
                 db['inicio_torneo'] = valor
             elif clave == 'torneo_iniciado':
                 db['torneo_iniciado'] = str(valor).strip().lower() in ('true', '1', 'si', 'sí')
+            elif clave == 'drop_diario_activo':
+                db['drop_diario_activo'] = str(valor).strip().lower() in ('true', '1', 'si', 'sí')
+            elif clave == 'reto_activo_texto':
+                db['reto_activo_texto'] = valor
+            elif clave == 'reto_activo_fecha':
+                db['reto_activo_fecha'] = valor
+        if 'drop_diario_activo' not in db:
+            db['drop_diario_activo'] = DROP_DIARIO_ACTIVO_DEFAULT
         return db
     except Exception as e:
         print(f'Error cargando DB desde Google Sheets: {e}')
@@ -237,7 +294,10 @@ def guardar_db(db):
         meta_ws = _get_or_create_worksheet('meta', META_HEADERS)
         meta_filas = [META_HEADERS,
                       ['inicio_torneo', _valor_a_texto(db.get('inicio_torneo', ''))],
-                      ['torneo_iniciado', 'True' if db.get('torneo_iniciado') else 'False']]
+                      ['torneo_iniciado', 'True' if db.get('torneo_iniciado') else 'False'],
+                      ['drop_diario_activo', 'True' if db.get('drop_diario_activo') else 'False'],
+                      ['reto_activo_texto', _valor_a_texto(db.get('reto_activo_texto', ''))],
+                      ['reto_activo_fecha', _valor_a_texto(db.get('reto_activo_fecha', ''))]]
         meta_ws.clear()
         meta_ws.update('A1', meta_filas, value_input_option='RAW')
     except Exception as e:
@@ -278,8 +338,11 @@ def guardar_registros(registros):
         print(f'Error guardando registros en Google Sheets: {e}')
 
 
+META_KEYS = ('inicio_torneo', 'torneo_iniciado', 'drop_diario_activo', 'reto_activo_texto', 'reto_activo_fecha')
+
+
 def jugadores_validos(db):
-    return {k: v for k, v in db.items() if k not in ('inicio_torneo', 'torneo_iniciado') and isinstance(v, dict)}
+    return {k: v for k, v in db.items() if k not in META_KEYS and isinstance(v, dict)}
 
 
 # ------------------- VOZ -------------------
@@ -323,18 +386,6 @@ def maldiciones_activas_de(data):
 def castigos_pendientes_de(data):
     """Maldiciones activas y sin marcar como 'cumplido' por la directiva."""
     return [m for m in maldiciones_activas_de(data) if not m.get('cumplido')]
-
-
-def tiempo_restante_cooldown(data):
-    ultimo = data.get('ultimo_escudo_uso')
-    if not ultimo:
-        return 0
-    try:
-        fecha = datetime.datetime.fromisoformat(ultimo)
-    except Exception:
-        return 0
-    transcurridas = (datetime.datetime.now() - fecha).total_seconds() / 3600
-    return max(MALDICION_COOLDOWN_HORAS - transcurridas, 0)
 
 
 def aegis_activo(data):
@@ -393,6 +444,69 @@ def obtener_info_ranked(riot_id, region):
         'puuid': puuid, 'tier': 'UNRANKED', 'rank': '', 'lp': 0, 'wins': 0, 'losses': 0,
         'nombre': nombre_completo
     }
+
+
+def esta_en_partida_activa(puuid, plataforma):
+    """Spectator API: True si el jugador tiene una partida en vivo en este momento.
+    Nota: la API publica de Riot no expone cola/seleccion de campeon, solo partidas ya iniciadas."""
+    try:
+        headers = {'X-Riot-Token': RIOT_API_KEY}
+        url = f'https://{plataforma}.api.riotgames.com/lol/spectator/v5/active-games/by-summoner/{puuid}'
+        r = requests.get(url, headers=headers, timeout=6)
+        return r.status_code == 200
+    except Exception:
+        return False
+
+
+def en_ventana_postpartida(puuid, region_base):
+    """True si la ultima partida del jugador termino hace menos de POSTPARTIDA_GRACIA_MINUTOS."""
+    try:
+        headers = {'X-Riot-Token': RIOT_API_KEY}
+        url = f'https://{region_base}.api.riotgames.com/lol/match/v5/matches/by-puuid/{puuid}/ids?count=1'
+        r = requests.get(url, headers=headers, timeout=6)
+        if r.status_code != 200 or not r.json():
+            return False
+        match_id = r.json()[0]
+        url2 = f'https://{region_base}.api.riotgames.com/lol/match/v5/matches/{match_id}'
+        r2 = requests.get(url2, headers=headers, timeout=6)
+        if r2.status_code != 200:
+            return False
+        fin_ms = r2.json()['info'].get('gameEndTimestamp')
+        if not fin_ms:
+            return False
+        fin = datetime.datetime.fromtimestamp(fin_ms / 1000)
+        return (datetime.datetime.now() - fin).total_seconds() < POSTPARTIDA_GRACIA_MINUTOS * 60
+    except Exception:
+        return False
+
+
+def motivo_bloqueo_por_partida(puuid, data):
+    """Devuelve un texto de motivo si el jugador no puede lanzar/recibir por su estado de partida, o None si puede."""
+    plataforma = PLATFORM_MAP.get(data.get('region', 'lan').lower())
+    region_base = REGION_MAP.get(data.get('region', 'lan').lower())
+    if not plataforma or not region_base:
+        return None
+    try:
+        if esta_en_partida_activa(puuid, plataforma):
+            return 'esta en una partida en vivo ahora mismo'
+        if en_ventana_postpartida(puuid, region_base):
+            return f'termino una partida hace menos de {POSTPARTIDA_GRACIA_MINUTOS} minutos (se esta procesando el resultado)'
+    except Exception:
+        return None
+    return None
+
+
+def torneo_en_ultimas_48h(db):
+    """True si quedan menos de TORNEO_BLOQUEO_FINAL_HORAS para el cierre del torneo (Blue Shell desactivado)."""
+    if not db.get('torneo_iniciado'):
+        return False
+    try:
+        inicio = datetime.datetime.fromisoformat(db.get('inicio_torneo'))
+    except Exception:
+        return False
+    fin = inicio + datetime.timedelta(days=DURACION_TORNEO)
+    horas_restantes = (fin - datetime.datetime.now()).total_seconds() / 3600
+    return horas_restantes <= TORNEO_BLOQUEO_FINAL_HORAS
 
 
 TIER_ORDEN = ['IRON', 'BRONZE', 'SILVER', 'GOLD', 'PLATINUM', 'EMERALD',
@@ -621,6 +735,11 @@ async def registrar(interaction: discord.Interaction, nombre: str, elo_previo: s
         'maldiciones': [],
         'ultimo_escudo_uso': None,
         'escudo_hasta': '',
+        'ultima_maldicion_recibida': '',
+        'ultimo_match_procesado': '',
+        'racha_victorias': 0,
+        'campeones_ganados': {},
+        'victorias_con_castigo_contador': 0,
     }
     if 'inicio_torneo' not in db:
         db['inicio_torneo'] = str(ahora)
@@ -751,29 +870,57 @@ async def reglamento(interaction: discord.Interaction):
         inline=False)
     embed.add_field(
         name='4. Escudos Azules y maldiciones (Blue Shell)',
-        value=(f'Se ganan por logros automaticos o hazanas otorgadas por la Directiva (`/otorgar_escudo`), maximo '
-               f'{ESCUDOS_MAX_INVENTARIO} en inventario. Con `/maldecir @jugador` gastas uno para lanzar un efecto '
-               f'aleatorio (hechizos fijos, campeon a elegir entre 3, rol aleatorio, baneo forzado, o rebote). '
-               f'Maximo {MALDICION_MAX_ACTIVAS} maldiciones activas por victima, duran {MALDICION_DURACION_HORAS}h, '
-               f'cooldown de {MALDICION_COOLDOWN_HORAS}h para volver a lanzar.'),
+        value=(f'Maximo {ESCUDOS_MAX_INVENTARIO} Escudos Azules en inventario (si ganas mas con el inventario lleno, se pierden). '
+               f'Con `/maldecir @jugador` gastas uno para lanzar un efecto aleatorio (hechizos fijos, campeon a elegir entre 3, '
+               f'rol aleatorio, o baneo forzado). Maximo {MALDICION_MAX_ACTIVAS} maldiciones activas por victima, duran {MALDICION_DURACION_HORAS}h.'),
         inline=False)
     embed.add_field(
-        name='5. Aegis (proteccion)',
+        name='5. Cooldown de recepcion',
+        value='Top 1: sin cooldown. Top 2: 4h. Top 3-5: 6h. Resto de participantes: 12h. Se aplica sobre quien RECIBE la maldicion.',
+        inline=False)
+    embed.add_field(
+        name='6. Reverse',
+        value=('Cuanto mas abajo este tu objetivo, mas probable es que la shell rebote y el castigo lo cumplas tu. '
+               'Top1: 1% - Top2: 2% - Top3: 3% - Top4: 4% - Top5: 5% - Resto: 15%. Tirar hacia arriba es mas seguro. '
+               'Si sale reverse no tienes que hacer nada: rebota sola y el castigo se sortea para quien la lanzo.'),
+        inline=False)
+    embed.add_field(
+        name='7. Restricciones de lanzamiento',
+        value=('No puedes lanzar si estas en cola, en seleccion de campeon o en partida, ni en los minutos siguientes a '
+               f'terminar una partida ({POSTPARTIDA_GRACIA_MINUTOS} min, mientras se procesa el resultado). '
+               f'Las ultimas {TORNEO_BLOQUEO_FINAL_HORAS}h del torneo el sistema Blue Shell se desactiva por completo. '
+               'Se revisa a mano y queda registrada la hora exacta de cada lanzamiento.'),
+        inline=False)
+    embed.add_field(
+        name='8. Como conseguir una Blue Shell',
+        value=('Pentakill (2), Cuadrakill, 22 kills, 30 asistencias, racha de 6 victorias, comeback de 7.000 de oro, '
+               'KDA perfecto superior a 20, ganar una partida de 40+ min, cada 5 victorias con un campeon distinto, '
+               'cada 5 victorias jugando con castigo, o ganarle a alguien con una Blue Shell (se la robas). '
+               'Se detecta automaticamente tras cada partida. La Directiva tambien puede otorgarlas con `/otorgar_escudo`.'),
+        inline=False)
+    embed.add_field(
+        name='9. Drop diario',
+        value='Desactivado por defecto. Si se activa, la Directiva lanza un reto sencillo y se lo lleva el primero que lo cumpla (`/reclamar_reto` + confirmacion de la Directiva).',
+        inline=False)
+    embed.add_field(
+        name='10. Aegis (proteccion)',
         value=(f'Si un jugador acumula {CASTIGOS_PENDIENTES_PARA_AEGIS} maldiciones activas SIN cumplir, se activa '
                f'automaticamente un Aegis de {AEGIS_DURACION_HORAS}h que lo protege de nuevas maldiciones.'),
         inline=False)
     embed.add_field(
-        name='6. Cumplimiento de castigos',
-        value=('La Directiva verifica que el castigo/maldicion se haya cumplido en partida y lo marca con '
-               '`/cumplir_castigo`. Los castigos sin marcar cuentan para activar el Aegis del jugador.'),
+        name='11. Cumplimiento de castigos',
+        value=('Se cumple en la siguiente partida posible. Excepciones: si ya habias aceptado la cola cuando llego, o si es '
+               'imposible cumplirlo (ej. te toca un campeon baneado), se cumple en la siguiente que puedas. Prohibido sabotear '
+               'tu propio castigo para volverlo imposible. Jugar partidas ignorando un castigo pendiente es incumplir la norma. '
+               'No tienes que marcar nada: la Directiva revisa y marca como cumplido con `/cumplir_castigo` en un plazo razonable.'),
         inline=False)
     embed.add_field(
-        name='7. Premios',
+        name='12. Premios',
         value=(f'Ganador general: **${PREMIO_GANADOR_USD} USD** en efectivo + insignia/rol de honor en el servidor. '
                'Tambien se otorgan insignias por logros (Cima, Podio, Ascenso, hitos de puntos, etc.).'),
         inline=False)
     embed.add_field(
-        name='8. Conducta',
+        name='13. Conducta',
         value='Prohibido el uso de cuentas ajenas, boosting externo, o evadir la verificacion de voz. La Directiva puede descalificar por incumplimiento.',
         inline=False)
     embed.set_footer(text='Usa /ayuda para ver todos los comandos disponibles. Usa /terminos para ver el glosario completo.')
@@ -795,7 +942,7 @@ async def terminos(interaction: discord.Interaction):
     embed.add_field(
         name='Maldicion (Castigo)',
         value=('Efecto aleatorio que recibe un jugador cuando alguien usa `/maldecir` contra el (hechizos fijos, '
-               'campeon a elegir, rol aleatorio, baneo forzado, o rebote). Es diferente de un "castigo manual" '
+               'campeon a elegir, rol aleatorio, o baneo forzado). Es diferente de un "castigo manual" '
                '(`/castigar`), aunque ambos restan puntos o imponen una condicion.'),
         inline=False)
     embed.add_field(
@@ -804,10 +951,22 @@ async def terminos(interaction: discord.Interaction):
                'ejecuto y la marca como **cumplida** con `/cumplir_castigo`. Las pendientes cuentan para activar el Aegis.'),
         inline=False)
     embed.add_field(
+        name='Cooldown de recepcion',
+        value='Tiempo que debe pasar antes de que alguien pueda volver a maldecir a un jugador especifico, segun su posicion: Top1 sin cooldown, Top2 4h, Top3-5 6h, resto 12h.',
+        inline=False)
+    embed.add_field(
+        name='Reverse',
+        value='Rebote de la maldicion hacia quien la lanzo. La probabilidad depende de la posicion del objetivo (1% a 15%, mas seguro tirar hacia arriba).',
+        inline=False)
+    embed.add_field(
         name='Aegis (proteccion)',
         value=(f'Escudo TEMPORAL distinto del Escudo Azul: se activa automaticamente por {AEGIS_DURACION_HORAS}h cuando '
                f'un jugador acumula {CASTIGOS_PENDIENTES_PARA_AEGIS} maldiciones activas sin cumplir. Mientras dura, nadie '
                f'puede maldecirlo. No se gasta ni se otorga manualmente, es automatico.'),
+        inline=False)
+    embed.add_field(
+        name='Drop diario',
+        value='Sistema opcional (desactivado por defecto) donde la Directiva lanza un reto y el primero en cumplirlo gana una Blue Shell.',
         inline=False)
     embed.add_field(
         name='Escalado',
@@ -920,7 +1079,8 @@ async def ayuda(interaction: discord.Interaction):
                '`/terminos` - Glosario: Escudo Azul, Aegis, Escalado, Pendiente/Cumplido, etc.\n'
                '`/escudos` - Ve tus Escudos Azules y maldiciones activas\n'
                '`/maldecir` - Gasta un Escudo Azul y maldice a otro jugador\n'
-               '`/elegir_campeon` - Elige tu campeon si te tocó maldicion de campeon'),
+               '`/elegir_campeon` - Elige tu campeon si te tocó maldicion de campeon\n'
+               '`/reclamar_reto` - Avisa que cumpliste el reto del drop diario (si esta activo)'),
         inline=False
     )
     embed.add_field(
@@ -933,6 +1093,9 @@ async def ayuda(interaction: discord.Interaction):
                '`/pendientes` - Lista cuentas esperando clasificacion\n'
                '`/clasificar` - Asigna categoria (High/Low Elo) a una cuenta pendiente\n'
                '`/iniciar_torneo` - Comienza oficialmente el torneo y reinicia el progreso de pruebas\n'
+               '`/drop_diario` - Activa o desactiva el drop diario\n'
+               '`/lanzar_reto` - Lanza el reto del drop diario\n'
+               '`/confirmar_reto` - Confirma quien cumplio el reto y le da el escudo\n'
                '`/reiniciar_registro` - PELIGRO: borra todo para reiniciar con cuentas nuevas'),
         inline=False
     )
@@ -943,10 +1106,12 @@ async def ayuda(interaction: discord.Interaction):
     )
     embed.add_field(
         name='Escudos Azules (maldiciones)',
-        value=(f'Se ganan al desbloquear logros o por hazanas dentro del juego (la directiva las otorga), maximo '
-               f'{ESCUDOS_MAX_INVENTARIO} en inventario. Usa `/maldecir` para gastar uno. Maximo {MALDICION_MAX_ACTIVAS} '
-               f'maldiciones activas por victima, cooldown de {MALDICION_COOLDOWN_HORAS}h. Si acumulas '
-               f'{CASTIGOS_PENDIENTES_PARA_AEGIS} sin cumplir se activa un Aegis (proteccion) de {AEGIS_DURACION_HORAS}h.'),
+        value=(f'Se ganan automaticamente por hazanas en partida (pentakill, 22 kills, 30 asistencias, rachas, comeback de oro, '
+               f'KDA perfecto, victorias largas, etc.) o si la Directiva las otorga, maximo {ESCUDOS_MAX_INVENTARIO} en inventario. '
+               f'Usa `/maldecir` para gastar uno. Maximo {MALDICION_MAX_ACTIVAS} maldiciones activas por victima. Cooldown de '
+               f'recepcion segun posicion del objetivo (Top1 0h, Top2 4h, Top3-5 6h, resto 12h). Si acumulas '
+               f'{CASTIGOS_PENDIENTES_PARA_AEGIS} sin cumplir se activa un Aegis (proteccion) de {AEGIS_DURACION_HORAS}h. '
+               f'Usa `/terminos` o `/reglamento` para el detalle completo.'),
         inline=False
     )
     embed.add_field(
@@ -1011,13 +1176,22 @@ async def escudos(interaction: discord.Interaction):
                 f'- {m["texto"]} (de <@{m["de"]}>)' + (' [cumplido]' if m.get('cumplido') else ' [pendiente]')
                 for m in activas
             ) or 'Ninguna'
-            restante_cd = tiempo_restante_cooldown(data)
-            cd_txt = 'Disponible' if restante_cd <= 0 else f'{round(restante_cd, 1)} h restantes'
+            pos = posicion_de_jugador(db, puuid)
+            cd_horas = cooldown_recepcion_horas(pos)
+            cd_txt = 'sin cooldown (eres Top 1)' if cd_horas == 0 else f'{cd_horas}h'
+            restante_recepcion = 0
+            if data.get('ultima_maldicion_recibida'):
+                try:
+                    transcurridas = (datetime.datetime.now() - datetime.datetime.fromisoformat(data['ultima_maldicion_recibida'])).total_seconds() / 3600
+                    restante_recepcion = max(cd_horas - transcurridas, 0)
+                except Exception:
+                    pass
+            proteccion_txt = f'Protegido {round(restante_recepcion, 1)}h mas (cooldown de recepcion)' if restante_recepcion > 0 else f'Sin proteccion activa (cooldown de recepcion segun tu posicion: {cd_txt})'
             aegis_txt = f'Activo - {round(aegis_restante_horas(data), 1)}h restantes (nadie puede maldecirte)' if aegis_activo(data) else 'Inactivo'
             await interaction.followup.send(
                 f'**{data["nombre"]}**\n'
                 f'Escudos Azules disponibles: **{data.get("escudos", 0)}/{ESCUDOS_MAX_INVENTARIO}**\n'
-                f'Cooldown para lanzar: {cd_txt}\n'
+                f'{proteccion_txt}\n'
                 f'Aegis (proteccion): {aegis_txt}\n'
                 f'Maldiciones activas sobre ti ({len(activas)}/{MALDICION_MAX_ACTIVAS}):\n{malds_txt}'
             )
@@ -1060,19 +1234,38 @@ async def maldecir(interaction: discord.Interaction, usuario: discord.Member):
     if caster_data.get('escudos', 0) <= 0:
         await interaction.followup.send('No tienes Escudos Azules disponibles. Ganalos desbloqueando logros o pidiendole uno a la directiva por una hazana.')
         return
-    restante_cd = tiempo_restante_cooldown(caster_data)
-    if restante_cd > 0:
-        await interaction.followup.send(f'Debes esperar {round(restante_cd, 1)} horas mas para volver a lanzar una maldicion.')
+
+    if torneo_en_ultimas_48h(db):
+        await interaction.followup.send(
+            f'El sistema Blue Shell esta desactivado: quedan menos de {TORNEO_BLOQUEO_FINAL_HORAS}h para el cierre del torneo.')
         return
 
-    efecto = generar_efecto_maldicion()
+    # Cooldown de recepcion: depende de la posicion del OBJETIVO en la tabla.
+    pos_objetivo = posicion_de_jugador(db, target_puuid)
+    cd_horas = cooldown_recepcion_horas(pos_objetivo)
+    ultima_recibida = target_data.get('ultima_maldicion_recibida')
+    if ultima_recibida:
+        try:
+            transcurridas = (datetime.datetime.now() - datetime.datetime.fromisoformat(ultima_recibida)).total_seconds() / 3600
+            restante_recepcion = cd_horas - transcurridas
+            if restante_recepcion > 0:
+                await interaction.followup.send(
+                    f'**{target_data["nombre"]}** esta en cooldown de recepcion (le llego una maldicion hace poco). '
+                    f'Podras intentarlo de nuevo en {round(restante_recepcion, 1)} horas.')
+                return
+        except Exception:
+            pass
+
+    # Restricciones de lanzamiento: no en cola/partida/postpartida (segun API publica: partida en vivo o postpartida).
+    motivo_bloqueo = motivo_bloqueo_por_partida(caster_puuid, caster_data)
+    if motivo_bloqueo:
+        await interaction.followup.send(f'No puedes lanzar una maldicion ahora mismo: {motivo_bloqueo}.')
+        return
+
+    efecto = generar_efecto_maldicion(pos_objetivo)
     destino_puuid, destino_data = target_puuid, target_data
-    if efecto['tipo'] == 'rebote_lanzador':
+    if efecto['tipo'] == 'reverse':
         destino_puuid, destino_data = caster_puuid, caster_data
-    elif efecto['tipo'] == 'rebote_random':
-        candidatos = [(p, d) for p, d in valid.items() if d.get('estado') == 'aprobado' and d['discord_id'] != caster_id]
-        if candidatos:
-            destino_puuid, destino_data = random.choice(candidatos)
 
     if aegis_activo(destino_data):
         await interaction.followup.send(
@@ -1091,6 +1284,7 @@ async def maldecir(interaction: discord.Interaction, usuario: discord.Member):
     ahora = str(datetime.datetime.now())
     caster_data['escudos'] = caster_data.get('escudos', 0) - 1
     caster_data['ultimo_escudo_uso'] = ahora
+    destino_data['ultima_maldicion_recibida'] = ahora
     destino_data.setdefault('maldiciones', []).append({
         'tipo': efecto['tipo'], 'texto': efecto['texto'], 'opciones': efecto['opciones'],
         'elegido': efecto['elegido'], 'de': caster_id, 'fecha': ahora, 'cumplido': False,
@@ -1105,16 +1299,26 @@ async def maldecir(interaction: discord.Interaction, usuario: discord.Member):
 
     guardar_db(db)
 
+    registros = cargar_registros()
+    registros.append({
+        'tipo': 'maldecir', 'usuario': caster_id, 'nombre': caster_data['nombre'],
+        'puntos': 0, 'motivo': f"objetivo original:{target_data['nombre']} | efecto:{efecto['tipo']} | destino final:{destino_data['nombre']}",
+        'fecha': ahora,
+    })
+    guardar_registros(registros)
+
     embed = discord.Embed(title='Maldicion lanzada!', color=0x9b59b6, timestamp=datetime.datetime.now())
     embed.add_field(name='Lanzada por', value=f'<@{caster_id}>', inline=True)
-    embed.add_field(name='Objetivo final', value=f'**{destino_data["nombre"]}**', inline=True)
+    embed.add_field(name='Objetivo original', value=f'**{target_data["nombre"]}**', inline=True)
+    embed.add_field(name='Objetivo final', value=f'**{destino_data["nombre"]}**' + (' (REVERSE)' if efecto['tipo'] == 'reverse' else ''), inline=True)
     if efecto['tipo'] == 'campeon':
         opciones_txt = ', '.join(efecto['opciones'])
         embed.add_field(name='Efecto', value=f'{efecto["texto"]}\nOpciones: **{opciones_txt}**', inline=False)
         embed.set_thumbnail(url=icono_campeon(efecto['opciones'][0]))
     else:
         embed.add_field(name='Efecto', value=efecto['texto'], inline=False)
-    embed.set_footer(text=f'Dura {MALDICION_DURACION_HORAS}h - Maximo {MALDICION_MAX_ACTIVAS} activas por jugador - Cooldown de lanzamiento: {MALDICION_COOLDOWN_HORAS}h')
+    cd_destino_txt = 'sin cooldown (Top 1)' if cooldown_recepcion_horas(pos_objetivo) == 0 else f'{cooldown_recepcion_horas(pos_objetivo)}h de cooldown de recepcion'
+    embed.set_footer(text=f'Dura {MALDICION_DURACION_HORAS}h - Maximo {MALDICION_MAX_ACTIVAS} activas por jugador - El objetivo original tenia {cd_destino_txt}')
     await interaction.followup.send(
         content=f'<@{destino_data["discord_id"]}> te lanzaron una maldicion Blue Shell!',
         embed=embed)
@@ -1328,6 +1532,229 @@ async def historial(interaction: discord.Interaction, usuario: discord.Member):
     await interaction.followup.send(mensaje)
 
 
+@tree.command(name='drop_diario', description='(Directiva) Activa o desactiva el sistema de drop diario de Escudos Azules')
+@app_commands.describe(activo='True para activar, False para desactivar')
+async def drop_diario(interaction: discord.Interaction, activo: bool):
+    if not await requiere_directiva(interaction):
+        return
+    await interaction.response.defer()
+    db = cargar_db()
+    db['drop_diario_activo'] = activo
+    guardar_db(db)
+    await interaction.followup.send(f'Drop diario {"activado" if activo else "desactivado"}.')
+
+
+@tree.command(name='lanzar_reto', description='(Directiva) Lanza el reto del drop diario (ej. primer triple kill, primer First Blood)')
+@app_commands.describe(texto='Descripcion del reto a cumplir')
+async def lanzar_reto(interaction: discord.Interaction, texto: str):
+    if not await requiere_directiva(interaction):
+        return
+    await interaction.response.defer()
+    db = cargar_db()
+    if not db.get('drop_diario_activo'):
+        await interaction.followup.send('El drop diario esta desactivado. Actívalo primero con `/drop_diario activo:True`.')
+        return
+    db['reto_activo_texto'] = texto
+    db['reto_activo_fecha'] = str(datetime.datetime.now())
+    guardar_db(db)
+    await interaction.followup.send(
+        f'**Reto del dia lanzado:** {texto}\n'
+        f'Se lo lleva el primero que lo cumpla en una partida iniciada a partir de ahora. '
+        f'Usa `/reclamar_reto` cuando lo logres (la Directiva debe confirmarlo con `/confirmar_reto`).')
+
+
+@tree.command(name='reclamar_reto', description='Avisa a la Directiva que cumpliste el reto del drop diario')
+async def reclamar_reto(interaction: discord.Interaction):
+    await interaction.response.defer()
+    db = cargar_db()
+    if not db.get('drop_diario_activo') or not db.get('reto_activo_texto'):
+        await interaction.followup.send('No hay ningun reto activo ahora mismo.')
+        return
+    await interaction.followup.send(
+        f'{interaction.user.mention} reclama haber cumplido el reto: "{db["reto_activo_texto"]}". '
+        f'La Directiva debe confirmarlo con `/confirmar_reto usuario:{interaction.user.mention}`.')
+
+
+@tree.command(name='confirmar_reto', description='(Directiva) Confirma que un jugador cumplio el reto del drop diario y le da el escudo')
+@app_commands.describe(usuario='Jugador que cumplio el reto')
+async def confirmar_reto(interaction: discord.Interaction, usuario: discord.Member):
+    if not await requiere_directiva(interaction):
+        return
+    await interaction.response.defer()
+    db = cargar_db()
+    if not db.get('reto_activo_texto'):
+        await interaction.followup.send('No hay ningun reto activo para confirmar.')
+        return
+    for puuid, data in jugadores_validos(db).items():
+        if data['discord_id'] == str(usuario.id):
+            if data.get('escudos', 0) >= ESCUDOS_MAX_INVENTARIO:
+                await interaction.followup.send(f'**{data["nombre"]}** ya tiene el inventario de escudos lleno, no se otorgo.')
+            else:
+                data['escudos'] = data.get('escudos', 0) + 1
+            texto_reto = db['reto_activo_texto']
+            db['reto_activo_texto'] = ''
+            db['reto_activo_fecha'] = ''
+            guardar_db(db)
+            await interaction.followup.send(
+                f'<@{usuario.id}> gano el drop diario: "{texto_reto}". Recibio un **Escudo Azul**. '
+                f'Total: {data.get("escudos", 0)}/{ESCUDOS_MAX_INVENTARIO}.')
+            return
+    await interaction.followup.send('Usuario no encontrado en el torneo.')
+
+
+# ------------------- OBTENCION AUTOMATICA DE ESCUDOS (Match-V5) -------------------
+
+def _kda_valor(kills, deaths, assists):
+    if deaths == 0:
+        return float(kills + assists)
+    return (kills + assists) / deaths
+
+
+async def _procesar_partida_jugador(puuid, data, validos, headers):
+    """Revisa la ultima partida ranked del jugador y otorga Escudos Azules automaticos segun corresponda.
+    Devuelve una lista de textos de anuncio (puede estar vacia) y modifica 'data' in-place."""
+    anuncios = []
+    region_base = REGION_MAP.get(data.get('region', 'lan').lower())
+    if not region_base:
+        return anuncios
+    try:
+        url = f'https://{region_base}.api.riotgames.com/lol/match/v5/matches/by-puuid/{puuid}/ids?count=1'
+        r = requests.get(url, headers=headers, timeout=8)
+        if r.status_code != 200 or not r.json():
+            return anuncios
+        match_id = r.json()[0]
+        if match_id == data.get('ultimo_match_procesado'):
+            return anuncios
+
+        url2 = f'https://{region_base}.api.riotgames.com/lol/match/v5/matches/{match_id}'
+        r2 = requests.get(url2, headers=headers, timeout=8)
+        if r2.status_code != 200:
+            return anuncios
+        match = r2.json()
+        info_match = match['info']
+        data['ultimo_match_procesado'] = match_id
+
+        if info_match.get('gameDuration', 0) < 300 or info_match.get('gameMode') != 'CLASSIC':
+            return anuncios  # remake/partida invalida/no-ranked, se marca como visto pero no se evalua
+
+        participante = next((p for p in info_match['participants'] if p['puuid'] == puuid), None)
+        if participante is None:
+            return anuncios
+
+        gano = participante.get('win', False)
+        kills = participante.get('kills', 0)
+        deaths = participante.get('deaths', 0)
+        assists = participante.get('assists', 0)
+        penta = participante.get('pentaKills', 0)
+        quadra = participante.get('quadraKills', 0)
+        duracion_min = info_match.get('gameDuration', 0) / 60
+        champ = participante.get('championName', 'Desconocido')
+
+        def ganar_escudos(cantidad, motivo):
+            espacio = max(ESCUDOS_MAX_INVENTARIO - data.get('escudos', 0), 0)
+            otorgar = min(cantidad, espacio)
+            if otorgar > 0:
+                data['escudos'] = data.get('escudos', 0) + otorgar
+                anuncios.append(f'{motivo} (+{otorgar} Escudo{"s" if otorgar != 1 else ""} Azul{"es" if otorgar != 1 else ""})')
+            elif cantidad > 0:
+                anuncios.append(f'{motivo} (inventario de escudos lleno, no se otorgo)')
+
+        if penta > 0:
+            ganar_escudos(2, 'Pentakill')
+        if quadra > 0:
+            ganar_escudos(1, 'Cuadrakill')
+        if kills >= 22:
+            ganar_escudos(1, f'{kills} kills en una partida')
+        if assists >= 30:
+            ganar_escudos(1, f'{assists} asistencias en una partida')
+        kda = _kda_valor(kills, deaths, assists)
+        if kda > 20:
+            ganar_escudos(1, f'KDA perfecto ({round(kda, 1)})')
+        if gano and duracion_min >= 40:
+            ganar_escudos(1, f'Victoria de {round(duracion_min)} min')
+
+        if gano:
+            data['racha_victorias'] = data.get('racha_victorias', 0) + 1
+            if data['racha_victorias'] % 6 == 0:
+                ganar_escudos(1, f'Racha de {data["racha_victorias"]} victorias')
+        else:
+            data['racha_victorias'] = 0
+
+        if gano:
+            campeones = data.get('campeones_ganados') or {}
+            if not isinstance(campeones, dict):
+                campeones = {}
+            campeones[champ] = campeones.get(champ, 0) + 1
+            data['campeones_ganados'] = campeones
+            if campeones[champ] % 5 == 0:
+                ganar_escudos(1, f'{campeones[champ]} victorias con {champ}')
+
+        tenia_castigo = len(castigos_pendientes_de(data)) > 0
+        if gano and tenia_castigo:
+            data['victorias_con_castigo_contador'] = data.get('victorias_con_castigo_contador', 0) + 1
+            if data['victorias_con_castigo_contador'] % 5 == 0:
+                ganar_escudos(1, f'{data["victorias_con_castigo_contador"]} victorias jugando con castigo pendiente')
+
+        if gano:
+            try:
+                pid_to_team = {p['participantId']: p['teamId'] for p in info_match['participants']}
+                mi_team = participante['teamId']
+                url3 = f'https://{region_base}.api.riotgames.com/lol/match/v5/matches/{match_id}/timeline'
+                r3 = requests.get(url3, headers=headers, timeout=8)
+                if r3.status_code == 200:
+                    frames = r3.json()['info']['frames']
+                    idx = min(15, len(frames) - 1)
+                    if idx >= 0:
+                        pframes = frames[idx]['participantFrames']
+                        oro_propio = sum(pf['totalGold'] for pid_str, pf in pframes.items() if pid_to_team.get(int(pid_str)) == mi_team)
+                        oro_rival = sum(pf['totalGold'] for pid_str, pf in pframes.items() if pid_to_team.get(int(pid_str)) != mi_team)
+                        if oro_rival - oro_propio >= 7000:
+                            ganar_escudos(1, 'Comeback de 7000+ de oro')
+            except Exception:
+                pass
+
+        if gano:
+            mi_team = participante.get('teamId')
+            for p2 in info_match['participants']:
+                if p2.get('teamId') == mi_team:
+                    continue
+                rival_data = validos.get(p2.get('puuid'))
+                if rival_data and rival_data.get('escudos', 0) > 0 and data.get('escudos', 0) < ESCUDOS_MAX_INVENTARIO:
+                    rival_data['escudos'] = rival_data.get('escudos', 0) - 1
+                    data['escudos'] = data.get('escudos', 0) + 1
+                    anuncios.append(f'Le robaste un Escudo Azul a **{rival_data["nombre"]}** por vencerlo')
+    except Exception as e:
+        print(f'Error procesando partida de {puuid}: {e}')
+    return anuncios
+
+
+@tasks.loop(minutes=DROP_DIARIO_INTERVALO_MIN)
+async def revisar_partidas_recientes():
+    db = cargar_db()
+    validos = jugadores_validos(db)
+    if not validos:
+        return
+    headers = {'X-Riot-Token': RIOT_API_KEY}
+    anuncios_totales = []
+    for puuid, data in list(validos.items()):
+        if data.get('estado') != 'aprobado':
+            continue
+        anuncios = await _procesar_partida_jugador(puuid, data, validos, headers)
+        if anuncios:
+            anuncios_totales.append(f"<@{data['discord_id']}> **{data.get('nombre', '?')}**: " + '; '.join(anuncios))
+
+    guardar_db(db)
+
+    if anuncios_totales and CANAL_CLASIFICACION_ID != 0:
+        canal = client.get_channel(CANAL_CLASIFICACION_ID)
+        if canal:
+            try:
+                texto = '**Escudos Azules ganados en partida (automatico)**\n' + '\n'.join(anuncios_totales[:10])
+                await canal.send(texto)
+            except Exception:
+                pass
+
+
 # ------------------- TAREAS AUTOMATICAS -------------------
 
 @tasks.loop(minutes=30)
@@ -1381,6 +1808,8 @@ async def on_ready():
         actualizar_canal.start()
     if not voice_checkpoint.is_running():
         voice_checkpoint.start()
+    if not revisar_partidas_recientes.is_running():
+        revisar_partidas_recientes.start()
 
 
 # ------------------- SITIO WEB (gratis, mismo servicio) -------------------
