@@ -707,7 +707,8 @@ def calcular_estado_torneo(db):
 
 # ------------------- CALCULO DE TABLA -------------------
 
-def calcular_tabla(db):    """Devuelve (high, low, pendientes, sin_voz) con los datos ya frescos de Riot.
+def calcular_tabla(db):
+    """Devuelve (high, low, pendientes, sin_voz) con los datos ya frescos de Riot.
     El orden dentro de cada categoria se basa en 'escalado' (division/liga), no solo LP crudo."""
     high, low, pendientes, sin_voz = [], [], [], []
     for puuid, data in jugadores_validos(db).items():
