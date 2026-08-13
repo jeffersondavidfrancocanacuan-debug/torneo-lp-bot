@@ -117,42 +117,145 @@ def posicion_de_jugador(db, puuid):
     return None
 
 DDRAGON_VERSION = '14.23.1'
+
+# Gama completa de campeones (nombre para mostrar). Las maldiciones de tipo campeon
+# se sortean sobre TODO este pool, no sobre un subconjunto reducido.
 CAMPEONES_POOL = [
-    'Teemo', 'Yuumi', 'Singed', 'Nunu', 'Amumu', 'Shaco', 'Fiddlesticks',
-    'Urgot', 'Heimerdinger', 'Ziggs', 'Corki', 'Kled', 'Rammus', 'Zilean',
-    'Yorick', 'Illaoi', 'Cho\'Gath', 'Nasus', 'Veigar', 'Anivia',
+    'Aatrox', 'Ahri', 'Akali', 'Akshan', 'Alistar', 'Amumu', 'Anivia', 'Annie', 'Aphelios', 'Ashe',
+    'Aurelion Sol', 'Azir', 'Bard', "Bel'Veth", 'Blitzcrank', 'Brand', 'Braum', 'Briar', 'Caitlyn',
+    'Camille', 'Cassiopeia', "Cho'Gath", 'Corki', 'Darius', 'Diana', 'Dr. Mundo', 'Draven', 'Ekko',
+    'Elise', 'Evelynn', 'Ezreal', 'Fiddlesticks', 'Fiora', 'Fizz', 'Galio', 'Gangplank', 'Garen',
+    'Gnar', 'Gragas', 'Graves', 'Gwen', 'Hecarim', 'Heimerdinger', 'Hwei', 'Illaoi', 'Irelia',
+    'Ivern', 'Janna', 'Jarvan IV', 'Jax', 'Jayce', 'Jhin', 'Jinx', "K'Sante", "Kai'Sa", 'Kalista',
+    'Karma', 'Karthus', 'Kassadin', 'Katarina', 'Kayle', 'Kayn', 'Kennen', "Kha'Zix", 'Kindred',
+    'Kled', "Kog'Maw", 'LeBlanc', 'Lee Sin', 'Leona', 'Lillia', 'Lissandra', 'Lucian', 'Lulu', 'Lux',
+    'Malphite', 'Malzahar', 'Maokai', 'Master Yi', 'Milio', 'Miss Fortune', 'Mordekaiser', 'Morgana',
+    'Naafiri', 'Nami', 'Nasus', 'Nautilus', 'Neeko', 'Nidalee', 'Nilah', 'Nocturne', 'Nunu & Willump',
+    'Olaf', 'Orianna', 'Ornn', 'Pantheon', 'Poppy', 'Pyke', 'Qiyana', 'Quinn', 'Rakan', 'Rammus',
+    "Rek'Sai", 'Rell', 'Renata Glasc', 'Renekton', 'Rengar', 'Riven', 'Rumble', 'Ryze', 'Samira',
+    'Sejuani', 'Senna', 'Seraphine', 'Sett', 'Shaco', 'Shen', 'Shyvana', 'Singed', 'Sion', 'Sivir',
+    'Skarner', 'Smolder', 'Sona', 'Soraka', 'Swain', 'Sylas', 'Syndra', 'Tahm Kench', 'Taliyah',
+    'Talon', 'Taric', 'Teemo', 'Thresh', 'Tristana', 'Trundle', 'Tryndamere', 'Twisted Fate',
+    'Twitch', 'Udyr', 'Urgot', 'Varus', 'Vayne', 'Veigar', "Vel'Koz", 'Vex', 'Vi', 'Viego', 'Viktor',
+    'Vladimir', 'Volibear', 'Warwick', 'Wukong', 'Xayah', 'Xerath', 'Xin Zhao', 'Yasuo', 'Yone',
+    'Yorick', 'Yuumi', 'Zac', 'Zed', 'Zeri', 'Ziggs', 'Zilean', 'Zoe', 'Zyra', 'Ambessa', 'Aurora',
+    'Mel',
 ]
+
+# Excepciones de nombre -> id de Data Dragon para campeones cuyo id no se puede derivar
+# simplemente quitando espacios y apostrofes del nombre mostrado.
+CAMPEON_ID_ESPECIAL = {
+    'Wukong': 'MonkeyKing',
+    'Renata Glasc': 'Renata',
+    'Nunu & Willump': 'Nunu',
+    'Dr. Mundo': 'DrMundo',
+    "Kai'Sa": 'Kaisa',
+    "Kha'Zix": 'Khazix',
+    "Vel'Koz": 'Velkoz',
+    "Cho'Gath": 'Chogath',
+    "K'Sante": 'KSante',
+    "Bel'Veth": 'Belveth',
+    'LeBlanc': 'Leblanc',
+}
 
 
 def icono_campeon(nombre):
-    n = nombre.replace("'", "").replace(" ", "")
+    n = CAMPEON_ID_ESPECIAL.get(nombre) or nombre.replace("'", "").replace(" ", "")
     return f'https://ddragon.leagueoflegends.com/cdn/{DDRAGON_VERSION}/img/champion/{n}.png'
 
 
+def splash_campeon(nombre):
+    """Arte de fondo (splash art) del campeon, para decorar la web. Mismo CDN gratuito de Riot."""
+    n = CAMPEON_ID_ESPECIAL.get(nombre) or nombre.replace("'", "").replace(" ", "")
+    return f'https://ddragon.leagueoflegends.com/cdn/img/champion/splash/{n}_0.jpg'
+
+
+# Pares de hechizos de invocador posibles para la maldicion de tipo 'hechizos'.
+HECHIZOS_POSIBLES = [
+    ('Flash', 'Ignite'), ('Flash', 'Exhaust'), ('Flash', 'Barrier'), ('Flash', 'Cleanse'),
+    ('Ghost', 'Heal'), ('Ghost', 'Ignite'), ('Teleport', 'Cleanse'), ('Teleport', 'Ignite'),
+    ('Exhaust', 'Ignite'), ('Heal', 'Barrier'), ('Smite', 'Flash'), ('Smite', 'Ignite'),
+]
+
+# Roles/lineas posibles para la maldicion de tipo 'rol'.
+ROLES_POSIBLES = ['Top', 'Jungla', 'Mid', 'ADC', 'Support']
+
+# Retos adicionales de la maldicion de tipo 'reto' (instruccion directa, sin variables).
+RETOS_POSIBLES = [
+    'No puedes comprar ningun objeto de vision extra (control wards) en toda la partida.',
+    'Debes jugar con la camara bloqueada (locked camera) toda la partida.',
+    'Tienes prohibido usar el chat de equipo, solo puedes usar pings.',
+    'Tienes prohibido usar pings en toda la partida.',
+    'No puedes recallar a base durante los primeros 5 minutos de partida, pase lo que pase.',
+    'Debes comprar Boots of Speed como primer objeto obligatoriamente.',
+    'No puedes comprar ningun objeto mitico/legendario hasta el minuto 15.',
+    'Debes silenciar (mute) al jugador con mejor KDA del equipo rival apenas empiece la partida.',
+    'Solo puedes usar un summoner spell (el otro debe quedar en cooldown toda la partida, no lo uses).',
+]
+
+
 def generar_efecto_maldicion(posicion_objetivo=None):
-    """Devuelve un dict {tipo, texto, opciones} representando el efecto de la maldicion.
-    Primero se sortea el Reverse segun la posicion del objetivo; si no sale, se sortea un efecto normal."""
+    """Devuelve un dict {tipo, texto, opciones, elegido} representando el efecto de la maldicion.
+    Primero se sortea el Reverse segun la posicion del objetivo; si no sale, se sortea un efecto
+    entre una lista amplia de variantes ya generadas (cada una con su propio sorteo interno de
+    campeon/hechizos/rol/reto), lo que da mucha mas variedad que elegir solo entre 4 tipos fijos."""
     if random.random() < probabilidad_reverse(posicion_objetivo):
         return {
             'tipo': 'reverse',
             'texto': 'REVERSE: la maldicion rebota. El castigo lo cumple quien la lanzo, no el objetivo.',
             'opciones': [], 'elegido': None,
         }
-    tipo = random.choice(['hechizos', 'campeon', 'rol', 'baneo'])
-    if tipo == 'campeon':
-        opciones = random.sample(CAMPEONES_POOL, 3)
-        return {
-            'tipo': 'campeon',
-            'texto': 'Debes elegir y jugar uno de estos 3 campeones en tu proxima partida (usa /elegir_campeon).',
-            'opciones': opciones,
-            'elegido': None,
-        }
-    textos = {
-        'hechizos': 'Hechizos de invocador obligatorios: solo Flash + Ignite en tu proxima partida.',
-        'rol': 'Rol/posicion aleatoria obligatoria en tu proxima partida.',
-        'baneo': 'Debes banear el campeon que te pida quien te maldijo en tu proxima partida.',
-    }
-    return {'tipo': tipo, 'texto': textos[tipo], 'opciones': [], 'elegido': None}
+
+    candidatos = []
+
+    # Elegir 1 de 3 campeones (sobre la gama completa).
+    opciones_campeones = random.sample(CAMPEONES_POOL, 3)
+    candidatos.append({
+        'tipo': 'campeon',
+        'texto': f'Debes elegir y jugar uno de estos 3 campeones en tu proxima partida (usa /elegir_campeon): **{", ".join(opciones_campeones)}**.',
+        'opciones': opciones_campeones, 'elegido': None,
+    })
+
+    # Campeon fijo: un unico campeon aleatorio de toda la gama, sin eleccion posible.
+    campeon_fijo = random.choice(CAMPEONES_POOL)
+    candidatos.append({
+        'tipo': 'campeon_fijo',
+        'texto': f'Debes jugar obligatoriamente a **{campeon_fijo}** en tu proxima partida, sin excepcion.',
+        'opciones': [campeon_fijo], 'elegido': campeon_fijo,
+    })
+
+    # Hechizos de invocador forzados (par aleatorio).
+    par = random.choice(HECHIZOS_POSIBLES)
+    candidatos.append({
+        'tipo': 'hechizos',
+        'texto': f'Hechizos de invocador obligatorios: solo **{par[0]} + {par[1]}** en tu proxima partida.',
+        'opciones': [], 'elegido': None,
+    })
+
+    # Rol/linea forzada (especifica, no generica).
+    rol = random.choice(ROLES_POSIBLES)
+    candidatos.append({
+        'tipo': 'rol',
+        'texto': f'Debes jugar obligatoriamente de **{rol}** en tu proxima partida, sin importar tu rol habitual.',
+        'opciones': [], 'elegido': None,
+    })
+
+    # Baneo obligatorio de un campeon especifico (sorteado por el sistema, no a criterio de quien maldice).
+    campeon_baneo = random.choice(CAMPEONES_POOL)
+    candidatos.append({
+        'tipo': 'baneo',
+        'texto': f'Debes banear obligatoriamente a **{campeon_baneo}** en tu proxima partida (si no puedes banearlo, se cumple en la siguiente en la que puedas).',
+        'opciones': [], 'elegido': None,
+    })
+
+    # Retos variados que no dependen de campeon/hechizos/rol.
+    candidatos.append({
+        'tipo': 'reto',
+        'texto': random.choice(RETOS_POSIBLES),
+        'opciones': [], 'elegido': None,
+    })
+
+    return random.choice(candidatos)
 
 
 # Sesiones de voz activas en memoria: {discord_id: datetime_de_ultimo_checkpoint}
@@ -656,7 +759,6 @@ TIER_ORDEN = ['IRON', 'BRONZE', 'SILVER', 'GOLD', 'PLATINUM', 'EMERALD',
               'DIAMOND', 'MASTER', 'GRANDMASTER', 'CHALLENGER']
 RANK_ORDEN = ['IV', 'III', 'II', 'I']  # de menor a mayor dentro de una division
 
-
 def tier_index(tier):
     try:
         return TIER_ORDEN.index(tier.upper())
@@ -1014,8 +1116,10 @@ async def reglamento(interaction: discord.Interaction):
     embed.add_field(
         name='4. Escudos Azules y maldiciones (Blue Shell)',
         value=(f'Maximo {ESCUDOS_MAX_INVENTARIO} Escudos Azules en inventario (si ganas mas con el inventario lleno, se pierden). '
-               f'Con `/maldecir @jugador` gastas uno para lanzar un efecto aleatorio (hechizos fijos, campeon a elegir entre 3, '
-               f'rol aleatorio, o baneo forzado). Maximo {MALDICION_MAX_ACTIVAS} maldiciones activas por victima, duran {MALDICION_DURACION_HORAS}h.'),
+               f'Con `/maldecir @jugador` gastas uno para lanzar un efecto aleatorio de entre una gran variedad de retos: '
+               f'campeon a elegir entre 3, campeon fijo obligatorio, hechizos de invocador forzados, rol/linea forzada, '
+               f'baneo obligatorio de un campeon especifico, y otros retos (vision, camara bloqueada, chat, compras, etc.), '
+               f'todos sorteados sobre la gama completa de campeones de LoL. Maximo {MALDICION_MAX_ACTIVAS} maldiciones activas por victima, duran {MALDICION_DURACION_HORAS}h.'),
         inline=False)
     embed.add_field(
         name='5. Cooldown de recepcion',
@@ -1084,9 +1188,11 @@ async def terminos(interaction: discord.Interaction):
         inline=False)
     embed.add_field(
         name='Maldicion (Castigo)',
-        value=('Efecto aleatorio que recibe un jugador cuando alguien usa `/maldecir` contra el (hechizos fijos, '
-               'campeon a elegir, rol aleatorio, o baneo forzado). Es diferente de un "castigo manual" '
-               '(`/castigar`), aunque ambos restan puntos o imponen una condicion.'),
+        value=('Efecto aleatorio que recibe un jugador cuando alguien usa `/maldecir` contra el: campeon a elegir '
+               'entre 3, campeon fijo obligatorio, hechizos de invocador forzados, rol/linea forzada, baneo '
+               'obligatorio de un campeon especifico, u otro reto (todo sorteado sobre la gama completa de '
+               'campeones). Es diferente de un "castigo manual" (`/castigar`), aunque ambos restan puntos o '
+               'imponen una condicion.'),
         inline=False)
     embed.add_field(
         name='Pendiente / Cumplido',
@@ -1409,7 +1515,6 @@ async def maldecir(interaction: discord.Interaction, usuario: discord.Member):
     destino_puuid, destino_data = target_puuid, target_data
     if efecto['tipo'] == 'reverse':
         destino_puuid, destino_data = caster_puuid, caster_data
-
     if aegis_activo(destino_data):
         await interaction.followup.send(
             f'La maldicion iba a rebotar hacia **{destino_data["nombre"]}**, pero tiene un Aegis activo y la maldicion se disipa. Se consumio tu escudo igualmente.')
@@ -1417,6 +1522,7 @@ async def maldecir(interaction: discord.Interaction, usuario: discord.Member):
         caster_data['ultimo_escudo_uso'] = str(datetime.datetime.now())
         guardar_db(db)
         return
+
     if len(maldiciones_activas_de(destino_data)) >= MALDICION_MAX_ACTIVAS:
         await interaction.followup.send(
             f'**{destino_data["nombre"]}** ya tiene el maximo de {MALDICION_MAX_ACTIVAS} maldiciones activas ahora mismo. '
@@ -1457,6 +1563,9 @@ async def maldecir(interaction: discord.Interaction, usuario: discord.Member):
         opciones_txt = ', '.join(efecto['opciones'])
         embed.add_field(name='Efecto', value=f'{efecto["texto"]}\nOpciones: **{opciones_txt}**', inline=False)
         embed.set_thumbnail(url=icono_campeon(efecto['opciones'][0]))
+    elif efecto['tipo'] == 'campeon_fijo':
+        embed.add_field(name='Efecto', value=efecto['texto'], inline=False)
+        embed.set_thumbnail(url=icono_campeon(efecto['elegido']))
     else:
         embed.add_field(name='Efecto', value=efecto['texto'], inline=False)
     cd_destino_txt = 'sin cooldown (Top 1)' if cooldown_recepcion_horas(pos_objetivo) == 0 else f'{cooldown_recepcion_horas(pos_objetivo)}h de cooldown de recepcion'
@@ -1969,22 +2078,56 @@ PAGINA_HTML = """
 <title>SoloQ Challenge</title>
 <style>
   * { box-sizing: border-box; }
+  @keyframes brillo {
+    0%, 100% { text-shadow: 0 0 18px rgba(245,197,24,0.55), 0 0 2px rgba(245,197,24,0.9); }
+    50% { text-shadow: 0 0 34px rgba(245,197,24,0.95), 0 0 6px rgba(245,197,24,1); }
+  }
+  @keyframes flotar {
+    0%, 100% { transform: translateY(0px) rotate(-4deg); }
+    50% { transform: translateY(-10px) rotate(4deg); }
+  }
+  @keyframes girar {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+  }
+  @keyframes pulso {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(245,197,24,0.5); }
+    50% { box-shadow: 0 0 0 8px rgba(245,197,24,0); }
+  }
+  @keyframes aparecer {
+    from { opacity: 0; transform: translateY(8px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
   body { background:#0b0d12; color:#e8e8e8; font-family: 'Segoe UI', Arial, sans-serif; margin:0; padding:0 0 60px; }
-  header { background:radial-gradient(circle at top, #1a2233, #0b0d12); padding:50px 20px 30px; text-align:center; border-bottom:3px solid #f5c518; }
-  header h1 { margin:0; font-size:2.8em; color:#f5c518; letter-spacing:1px; text-shadow:0 0 20px rgba(245,197,24,0.4); }
-  header p { color:#9ca3af; margin-top:8px; }
-  .estado { display:inline-block; margin-top:16px; padding:8px 18px; background:#1f2937; border:1px solid #f5c518; border-radius:20px; color:#f5c518; font-weight:bold; font-size:0.9em; }
-  .premio { display:inline-block; margin-top:10px; margin-left:10px; padding:8px 18px; background:#132a1c; border:1px solid #3ba55d; border-radius:20px; color:#3ba55d; font-weight:bold; font-size:0.9em; }
-  .stats { display:flex; justify-content:center; gap:16px; margin-top:24px; flex-wrap:wrap; }
-  .stat-card { background:#161b22; border-radius:10px; padding:14px 22px; min-width:120px; text-align:center; border:1px solid #2a2f3a; }
+  header {
+    position: relative; overflow: hidden; padding:60px 20px 34px; text-align:center;
+    border-bottom:3px solid #f5c518;
+    background: linear-gradient(rgba(9,11,16,0.80), rgba(9,11,16,0.93)), {% if fondo_url %}url('{{ fondo_url }}'){% endif %};
+    background-size: cover; background-position: center 20%;
+  }
+  header::before {
+    content: ""; position: absolute; inset: 0;
+    background: radial-gradient(circle at 50% -10%, rgba(245,197,24,0.25), transparent 60%);
+    pointer-events: none;
+  }
+  .logo-fila { display:flex; align-items:center; justify-content:center; gap:14px; position:relative; z-index:1; }
+  .logo-escudo { font-size: 2.4em; display:inline-block; animation: flotar 3.5s ease-in-out infinite; filter: drop-shadow(0 0 8px rgba(155,89,182,0.8)); }
+  header h1 { margin:0; font-size:2.9em; color:#f5c518; letter-spacing:1px; animation: brillo 2.6s ease-in-out infinite; }
+  header p { color:#c8ccd4; margin-top:10px; position:relative; z-index:1; }
+  .estado { display:inline-block; margin-top:18px; padding:8px 18px; background:#1f2937; border:1px solid #f5c518; border-radius:20px; color:#f5c518; font-weight:bold; font-size:0.9em; animation: pulso 2.4s infinite; position:relative; z-index:1; }
+  .premio { display:inline-block; margin-top:10px; margin-left:10px; padding:8px 18px; background:#132a1c; border:1px solid #3ba55d; border-radius:20px; color:#3ba55d; font-weight:bold; font-size:0.9em; position:relative; z-index:1; }
+  .stats { display:flex; justify-content:center; gap:16px; margin-top:26px; flex-wrap:wrap; position:relative; z-index:1; }
+  .stat-card { background:#161b22cc; backdrop-filter: blur(2px); border-radius:10px; padding:14px 22px; min-width:120px; text-align:center; border:1px solid #2a2f3a; transition: transform 0.2s ease, border-color 0.2s ease; }
+  .stat-card:hover { transform: translateY(-3px); border-color:#f5c518; }
   .stat-card .num { font-size:1.6em; color:#f5c518; font-weight:bold; }
   .stat-card .label { font-size:0.75em; color:#9ca3af; text-transform:uppercase; letter-spacing:1px; }
   .contenedor { max-width:1100px; margin:30px auto; padding:0 20px; }
-  .categoria { margin-bottom:40px; }
+  .categoria { margin-bottom:40px; animation: aparecer 0.5s ease-out; }
   .categoria h2 { border-left:5px solid #f5c518; padding-left:12px; font-size:1.4em; }
   table { width:100%; border-collapse:collapse; background:#161b22; border-radius:8px; overflow:hidden; }
   th, td { padding:12px 14px; text-align:left; border-bottom:1px solid #2a2f3a; }
   th { background:#1f2530; color:#f5c518; text-transform:uppercase; font-size:0.8em; letter-spacing:1px; }
+  tr { transition: background 0.15s ease; }
   tr:hover { background:#1c2230; }
   .pos1 { color:#f5c518; font-weight:bold; }
   .pos2 { color:#c0c0c0; font-weight:bold; }
@@ -1996,12 +2139,18 @@ PAGINA_HTML = """
   .badge-aegis { display:inline-block; padding:2px 8px; border-radius:10px; font-size:0.75em; font-weight:bold; background:#132a1c; color:#3ba55d; border:1px solid #3ba55d; }
   .badge-shell { display:inline-block; padding:2px 8px; border-radius:10px; font-size:0.75em; font-weight:bold; background:#241a33; color:#9b59b6; border:1px solid #9b59b6; margin-left:4px; }
   .champ-icon { width:28px; height:28px; border-radius:50%; vertical-align:middle; margin-right:6px; border:1px solid #f5c518; }
+  .destacado { display:flex; align-items:center; justify-content:center; gap:10px; margin-top:18px; position:relative; z-index:1; color:#9ca3af; font-size:0.85em; }
+  .destacado img { width:34px; height:34px; border-radius:50%; border:2px solid #9b59b6; animation: girar 6s linear infinite; }
   footer { text-align:center; color:#6b7280; margin-top:40px; font-size:0.85em; }
 </style>
 </head>
 <body>
 <header>
-  <h1>SoloQ Challenge</h1>
+  <div class="logo-fila">
+    <span class="logo-escudo">🛡️</span>
+    <h1>SoloQ Challenge</h1>
+    <span class="logo-escudo" style="animation-delay: -1.8s;">💠</span>
+  </div>
   <p>Torneo de escalado de division/liga - {{ duracion }} dias</p>
   <div class="estado">{{ estado_torneo }}</div>
   <div class="premio">Premio: ${{ premio }} USD + insignias</div>
@@ -2010,6 +2159,9 @@ PAGINA_HTML = """
     <div class="stat-card"><div class="num">{{ pendientes|length }}</div><div class="label">Pendientes de clasificacion</div></div>
     <div class="stat-card"><div class="num">{{ sin_voz|length }}</div><div class="label">Sin verificar voz</div></div>
   </div>
+  {% if campeon_destacado %}
+  <div class="destacado"><img src="{{ icono_destacado }}" alt=""> Maldicion Blue Shell del momento: podria tocarte <b style="color:#c9a8e0">{{ campeon_destacado }}</b></div>
+  {% endif %}
 </header>
 <div class="contenedor">
   <div class="aviso">Para que tus puntos sean validos debes conectarte al chat de voz del servidor de Discord (cualquier canal) mientras juegas tus partidas. El ranking se basa en escalar de division/liga (Blue Shell / Escudos Azules / Aegis activos).</div>
@@ -2092,9 +2244,13 @@ PAGINA_HTML = """
 def home():
     db = cargar_db()
     high, low, pendientes, sin_voz = calcular_tabla(db)
+    campeon_destacado = random.choice(CAMPEONES_POOL)
     return render_template_string(PAGINA_HTML, high=high, low=low, pendientes=pendientes, sin_voz=sin_voz,
                                    duracion=DURACION_TORNEO, estado_torneo=calcular_estado_torneo(db),
-                                   premio=PREMIO_GANADOR_USD)
+                                   premio=PREMIO_GANADOR_USD,
+                                   fondo_url=splash_campeon(campeon_destacado),
+                                   campeon_destacado=campeon_destacado,
+                                   icono_destacado=icono_campeon(campeon_destacado))
 
 
 @app.route('/api/tabla')
