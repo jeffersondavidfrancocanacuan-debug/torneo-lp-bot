@@ -459,23 +459,36 @@ def esta_en_partida_activa(puuid, plataforma):
 
 
 def en_ventana_postpartida(puuid, region_base):
-    """True si la ultima partida del jugador termino hace menos de POSTPARTIDA_GRACIA_MINUTOS."""
+    """True si la ULTIMA PARTIDA RANKED SOLO/DUO (queueId 420) del jugador termino hace menos de
+    POSTPARTIDA_GRACIA_MINUTOS. Ignora normales, ARAM, personalizadas y remakes (<5 min), que no
+    afectan al torneo y no deben bloquear el lanzamiento de maldiciones."""
     try:
         headers = {'X-Riot-Token': RIOT_API_KEY}
-        url = f'https://{region_base}.api.riotgames.com/lol/match/v5/matches/by-puuid/{puuid}/ids?count=1'
+        # Se piden varias partidas recientes (no solo la ultima) porque la ultima jugada puede ser
+        # una normal/ARAM/personalizada posterior a la ranked; se busca la ranked mas reciente.
+        url = f'https://{region_base}.api.riotgames.com/lol/match/v5/matches/by-puuid/{puuid}/ids?start=0&count=5'
         r = requests.get(url, headers=headers, timeout=6)
         if r.status_code != 200 or not r.json():
             return False
-        match_id = r.json()[0]
-        url2 = f'https://{region_base}.api.riotgames.com/lol/match/v5/matches/{match_id}'
-        r2 = requests.get(url2, headers=headers, timeout=6)
-        if r2.status_code != 200:
-            return False
-        fin_ms = r2.json()['info'].get('gameEndTimestamp')
-        if not fin_ms:
-            return False
-        fin = datetime.datetime.fromtimestamp(fin_ms / 1000)
-        return (datetime.datetime.now() - fin).total_seconds() < POSTPARTIDA_GRACIA_MINUTOS * 60
+        for match_id in r.json():
+            url2 = f'https://{region_base}.api.riotgames.com/lol/match/v5/matches/{match_id}'
+            r2 = requests.get(url2, headers=headers, timeout=6)
+            if r2.status_code != 200:
+                continue
+            info = r2.json()['info']
+            fin_ms = info.get('gameEndTimestamp')
+            if not fin_ms:
+                continue
+            fin = datetime.datetime.fromtimestamp(fin_ms / 1000)
+            segundos_desde_fin = (datetime.datetime.now() - fin).total_seconds()
+            # Si ya paso la ventana de gracia incluso para la partida mas reciente, no hace falta
+            # seguir revisando partidas mas antiguas (estan aun mas lejos en el tiempo).
+            if segundos_desde_fin >= POSTPARTIDA_GRACIA_MINUTOS * 60:
+                return False
+            if info.get('queueId') != 420 or info.get('gameDuration', 0) < 300:
+                continue  # no es ranked solo/duo valida (o fue un remake) -> no cuenta, se sigue buscando
+            return True
+        return False
     except Exception:
         return False
 
@@ -974,8 +987,7 @@ async def terminos(interaction: discord.Interaction):
                '(IV-III-II-I) dentro de cada una, en vez de solo contar LP crudo.'),
         inline=False)
     embed.add_field(
-        name='High Elo / Low Elo',
-        value='Categorias del torneo asignadas manualmente por la Directiva con `/clasificar` tras revisar la cuenta.',
+        name='High Elo / Low Elo',        value='Categorias del torneo asignadas manualmente por la Directiva con `/clasificar` tras revisar la cuenta.',
         inline=False)
     embed.set_footer(text='Usa /reglamento para ver las reglas completas.')
     await interaction.response.send_message(embed=embed)
@@ -1634,8 +1646,8 @@ async def _procesar_partida_jugador(puuid, data, validos, headers):
         info_match = match['info']
         data['ultimo_match_procesado'] = match_id
 
-        if info_match.get('gameDuration', 0) < 300 or info_match.get('gameMode') != 'CLASSIC':
-            return anuncios  # remake/partida invalida/no-ranked, se marca como visto pero no se evalua
+        if info_match.get('gameDuration', 0) < 300 or info_match.get('queueId') != 420:
+            return anuncios  # remake/partida invalida o no es Ranked Solo/Duo, se marca como visto pero no se evalua
 
         participante = next((p for p in info_match['participants'] if p['puuid'] == puuid), None)
         if participante is None:
