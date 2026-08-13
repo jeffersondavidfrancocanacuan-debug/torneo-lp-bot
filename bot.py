@@ -6,7 +6,11 @@ import json
 import os
 import random
 import datetime
-from threading import Thread
+import asyncio
+import signal
+import sys
+import time
+from threading import Thread, Lock
 from flask import Flask, jsonify, render_template_string
 
 # ================= CONFIGURACIÓN =================
@@ -155,10 +159,19 @@ def generar_efecto_maldicion(posicion_objetivo=None):
 VOICE_SESIONES = {}
 
 
-# ------------------- PERSISTENCIA (Google Sheets) -------------------
+# ------------------- PERSISTENCIA (Google Sheets, con cache en memoria) -------------------
+# La API de Google Sheets tiene limites de cuota (por defecto ~60 escrituras/min por proyecto).
+# El diseno anterior hacia una lectura + una reescritura COMPLETA de la hoja en cada comando de
+# Discord, lo que ademas de arriesgar el limite de cuota bajo uso concurrente, anadia latencia de
+# red a cada comando. Ahora la base de datos completa vive en memoria (_db_cache/_registros_cache):
+# los comandos leen y escriben sobre esa cache (instantaneo) y un task en segundo plano vuelca los
+# cambios pendientes a Sheets cada FLUSH_INTERVALO_SEG segundos, sin importar cuantos comandos se
+# hayan ejecutado mientras tanto. Para acciones destructivas o muy poco frecuentes (reiniciar
+# registro, iniciar torneo) se fuerza un volcado inmediato para no arriesgar esos cambios.
 
 GOOGLE_SHEET_NAME = os.environ.get('GOOGLE_SHEET_NAME', 'SoloQ Challenge DB')
 GOOGLE_CREDENTIALS_JSON = os.environ.get('GOOGLE_CREDENTIALS_JSON', '')
+FLUSH_INTERVALO_SEG = int(os.environ.get('FLUSH_INTERVALO_SEG', '20'))
 
 JUGADORES_HEADERS = [
     'puuid', 'discord_id', 'nombre', 'region', 'lp_inicial', 'tier_inicial', 'rank_inicial',
@@ -172,6 +185,12 @@ REGISTROS_HEADERS = ['tipo', 'usuario', 'nombre', 'puntos', 'motivo', 'fecha']
 
 _gs_client = None
 _gs_spreadsheet = None
+
+_cache_lock = Lock()
+_db_cache = None
+_db_dirty = False
+_registros_cache = None
+_registros_dirty = False
 
 
 def _get_spreadsheet():
@@ -207,10 +226,26 @@ def _valor_a_texto(valor):
     return str(valor)
 
 
-def cargar_db():
+def _con_reintentos(func, intentos=3, espera_base=2):
+    """Ejecuta func() reintentando ante errores transitorios de la API de Sheets (rate limit,
+    fallos de red). Sin esto, un simple 429 de Google tiraba el guardado entero."""
+    ultimo_error = None
+    for intento in range(intentos):
+        try:
+            return func()
+        except Exception as e:
+            ultimo_error = e
+            if intento < intentos - 1:
+                time.sleep(espera_base * (intento + 1))
+    raise ultimo_error
+
+
+def _cargar_db_desde_sheets():
+    """Lectura real desde Google Sheets. Solo se invoca una vez, al arrancar el bot (o si la
+    cache en memoria aun no existe)."""
     try:
         ws = _get_or_create_worksheet('jugadores', JUGADORES_HEADERS)
-        filas = ws.get_all_records(numericise_ignore=['all'])
+        filas = _con_reintentos(lambda: ws.get_all_records(numericise_ignore=['all']))
         db = {}
         for f in filas:
             puuid = f.get('puuid')
@@ -260,7 +295,7 @@ def cargar_db():
                 'victorias_con_castigo_contador': int(float(f.get('victorias_con_castigo_contador') or 0)),
             }
         meta_ws = _get_or_create_worksheet('meta', META_HEADERS)
-        for fila in meta_ws.get_all_records(numericise_ignore=['all']):
+        for fila in _con_reintentos(lambda: meta_ws.get_all_records(numericise_ignore=['all'])):
             clave = fila.get('clave')
             valor = fila.get('valor')
             if clave == 'inicio_torneo' and valor:
@@ -281,15 +316,17 @@ def cargar_db():
         return {}
 
 
-def guardar_db(db):
+def _guardar_db_en_sheets(db):
+    """Escritura real a Google Sheets. Solo la invoca el flush en segundo plano (o el flush
+    forzado de acciones criticas), nunca directamente cada comando."""
     try:
         ws = _get_or_create_worksheet('jugadores', JUGADORES_HEADERS)
         filas = [JUGADORES_HEADERS]
         for puuid, data in jugadores_validos(db).items():
             fila = [puuid] + [_valor_a_texto(data.get(campo, '')) for campo in JUGADORES_HEADERS[1:]]
             filas.append(fila)
-        ws.clear()
-        ws.update('A1', filas, value_input_option='RAW')
+        _con_reintentos(lambda: ws.clear())
+        _con_reintentos(lambda: ws.update('A1', filas, value_input_option='RAW'))
 
         meta_ws = _get_or_create_worksheet('meta', META_HEADERS)
         meta_filas = [META_HEADERS,
@@ -298,16 +335,54 @@ def guardar_db(db):
                       ['drop_diario_activo', 'True' if db.get('drop_diario_activo') else 'False'],
                       ['reto_activo_texto', _valor_a_texto(db.get('reto_activo_texto', ''))],
                       ['reto_activo_fecha', _valor_a_texto(db.get('reto_activo_fecha', ''))]]
-        meta_ws.clear()
-        meta_ws.update('A1', meta_filas, value_input_option='RAW')
+        _con_reintentos(lambda: meta_ws.clear())
+        _con_reintentos(lambda: meta_ws.update('A1', meta_filas, value_input_option='RAW'))
+        return True
     except Exception as e:
         print(f'Error guardando DB en Google Sheets: {e}')
+        return False
 
 
-def cargar_registros():
+def cargar_db():
+    """Devuelve la base de datos desde la cache en memoria (instantaneo, sin red). Solo golpea
+    la API de Sheets la primera vez que se llama, al arrancar el bot."""
+    global _db_cache
+    with _cache_lock:
+        if _db_cache is None:
+            _db_cache = _cargar_db_desde_sheets()
+        return _db_cache
+
+
+def guardar_db(db, forzar=False):
+    """Actualiza la cache en memoria y marca los cambios como pendientes de sincronizar con
+    Sheets (los recoge el flush periodico). Con forzar=True (reiniciar_registro, iniciar_torneo)
+    se sincroniza con Sheets de inmediato porque son acciones raras/criticas que no deben
+    arriesgarse a perderse si el bot se reinicia antes del proximo flush."""
+    global _db_cache, _db_dirty
+    with _cache_lock:
+        _db_cache = db
+        _db_dirty = True
+    if forzar:
+        flush_db_sincrono()
+
+
+def flush_db_sincrono():
+    """Vuelca la cache actual de jugadores a Sheets de forma bloqueante. Se usa desde el task
+    periodico (en un hilo aparte) y desde las acciones con forzar=True."""
+    global _db_dirty
+    with _cache_lock:
+        db_actual = _db_cache
+    if db_actual is None:
+        return
+    if _guardar_db_en_sheets(db_actual):
+        with _cache_lock:
+            _db_dirty = False
+
+
+def _cargar_registros_desde_sheets():
     try:
         ws = _get_or_create_worksheet('registros', REGISTROS_HEADERS)
-        filas = ws.get_all_records(numericise_ignore=['all'])
+        filas = _con_reintentos(lambda: ws.get_all_records(numericise_ignore=['all']))
         registros = []
         for f in filas:
             if not f.get('usuario'):
@@ -326,16 +401,71 @@ def cargar_registros():
         return []
 
 
-def guardar_registros(registros):
+def _guardar_registros_en_sheets(registros):
     try:
         ws = _get_or_create_worksheet('registros', REGISTROS_HEADERS)
         filas = [REGISTROS_HEADERS]
         for r in registros:
             filas.append([_valor_a_texto(r.get(campo, '')) for campo in REGISTROS_HEADERS])
-        ws.clear()
-        ws.update('A1', filas, value_input_option='RAW')
+        _con_reintentos(lambda: ws.clear())
+        _con_reintentos(lambda: ws.update('A1', filas, value_input_option='RAW'))
+        return True
     except Exception as e:
         print(f'Error guardando registros en Google Sheets: {e}')
+        return False
+
+
+def cargar_registros():
+    global _registros_cache
+    with _cache_lock:
+        if _registros_cache is None:
+            _registros_cache = _cargar_registros_desde_sheets()
+        return _registros_cache
+
+
+def guardar_registros(registros):
+    global _registros_cache, _registros_dirty
+    with _cache_lock:
+        _registros_cache = registros
+        _registros_dirty = True
+
+
+def flush_registros_sincrono():
+    global _registros_dirty
+    with _cache_lock:
+        actuales = _registros_cache
+    if actuales is None:
+        return
+    if _guardar_registros_en_sheets(actuales):
+        with _cache_lock:
+            _registros_dirty = False
+
+
+async def flush_pendientes():
+    """Vuelca a Sheets (en hilos aparte, sin bloquear el bot) los cambios de jugadores y/o
+    registros que esten pendientes. La llama el task periodico y el apagado del servicio."""
+    with _cache_lock:
+        hay_db = _db_dirty
+        hay_registros = _registros_dirty
+    if hay_db:
+        await asyncio.to_thread(flush_db_sincrono)
+    if hay_registros:
+        await asyncio.to_thread(flush_registros_sincrono)
+
+
+def flush_total_sincrono():
+    """Version bloqueante de flush_pendientes, para usar al apagar el proceso (senal SIGTERM de
+    Render en cada redeploy), donde ya no hay tiempo de esperar un hilo aparte."""
+    flush_db_sincrono()
+    flush_registros_sincrono()
+
+
+@tasks.loop(seconds=FLUSH_INTERVALO_SEG)
+async def sincronizar_sheets():
+    try:
+        await flush_pendientes()
+    except Exception as e:
+        print(f'Error en sincronizacion periodica con Sheets: {e}')
 
 
 META_KEYS = ('inicio_torneo', 'torneo_iniciado', 'drop_diario_activo', 'reto_activo_texto', 'reto_activo_fecha')
@@ -577,8 +707,7 @@ def calcular_estado_torneo(db):
 
 # ------------------- CALCULO DE TABLA -------------------
 
-def calcular_tabla(db):
-    """Devuelve (high, low, pendientes, sin_voz) con los datos ya frescos de Riot.
+def calcular_tabla(db):    """Devuelve (high, low, pendientes, sin_voz) con los datos ya frescos de Riot.
     El orden dentro de cada categoria se basa en 'escalado' (division/liga), no solo LP crudo."""
     high, low, pendientes, sin_voz = [], [], [], []
     for puuid, data in jugadores_validos(db).items():
@@ -987,7 +1116,8 @@ async def terminos(interaction: discord.Interaction):
                '(IV-III-II-I) dentro de cada una, en vez de solo contar LP crudo.'),
         inline=False)
     embed.add_field(
-        name='High Elo / Low Elo',        value='Categorias del torneo asignadas manualmente por la Directiva con `/clasificar` tras revisar la cuenta.',
+        name='High Elo / Low Elo',
+        value='Categorias del torneo asignadas manualmente por la Directiva con `/clasificar` tras revisar la cuenta.',
         inline=False)
     embed.set_footer(text='Usa /reglamento para ver las reglas completas.')
     await interaction.response.send_message(embed=embed)
@@ -1286,7 +1416,6 @@ async def maldecir(interaction: discord.Interaction, usuario: discord.Member):
         caster_data['ultimo_escudo_uso'] = str(datetime.datetime.now())
         guardar_db(db)
         return
-
     if len(maldiciones_activas_de(destino_data)) >= MALDICION_MAX_ACTIVAS:
         await interaction.followup.send(
             f'**{destino_data["nombre"]}** ya tiene el maximo de {MALDICION_MAX_ACTIVAS} maldiciones activas ahora mismo. '
@@ -1430,7 +1559,7 @@ async def reiniciar_registro(interaction: discord.Interaction, confirmar: str):
             'Accion cancelada. Escribe `confirmar: SI` (en mayusculas) para confirmar el borrado total de TODOS los jugadores registrados '
             '(incluye LP, bonus, castigos, logros, escudos y tiempo de voz acumulado). Usa esto solo cuando pasen a las cuentas nuevas.')
         return
-    guardar_db({})
+    guardar_db({}, forzar=True)
     await interaction.followup.send(
         'Se borraron todos los registros. Todos deben usar `/registrar` de nuevo con sus cuentas nuevas '
         '(pueden usar `elo_previo` para que la directiva sepa su nivel real al revisar).')
@@ -1459,7 +1588,7 @@ async def iniciar_torneo(interaction: discord.Interaction):
         contador += 1
     db['inicio_torneo'] = str(ahora)
     db['torneo_iniciado'] = True
-    guardar_db(db)
+    guardar_db(db, forzar=True)
     await interaction.followup.send(
         f'Torneo iniciado oficialmente. Se reinicio el progreso de {contador} jugadores aprobados '
         f'(el conteo de escalado arranca desde ahora, el tiempo de voz acumulado se conserva). Dura {DURACION_TORNEO} dias.')
@@ -1822,6 +1951,8 @@ async def on_ready():
         voice_checkpoint.start()
     if not revisar_partidas_recientes.is_running():
         revisar_partidas_recientes.start()
+    if not sincronizar_sheets.is_running():
+        sincronizar_sheets.start()
 
 
 # ------------------- SITIO WEB (gratis, mismo servicio) -------------------
@@ -1974,5 +2105,23 @@ def api_tabla():
 
 
 Thread(target=lambda: app.run(host='0.0.0.0', port=10000), daemon=True).start()
+
+
+def _manejar_apagado(signum, frame):
+    """Render envia SIGTERM al servicio en cada redeploy/reinicio. Antes de que el proceso
+    muera, se intenta un ultimo volcado sincrono de la cache a Sheets para no perder los cambios
+    que aun no habian llegado al proximo ciclo de sincronizar_sheets (maximo FLUSH_INTERVALO_SEG
+    segundos de cambios en juego)."""
+    print('Señal de apagado recibida, sincronizando cambios pendientes con Google Sheets...')
+    try:
+        flush_total_sincrono()
+        print('Sincronizacion final completada.')
+    except Exception as e:
+        print(f'Error sincronizando antes de apagar: {e}')
+    sys.exit(0)
+
+
+signal.signal(signal.SIGTERM, _manejar_apagado)
+signal.signal(signal.SIGINT, _manejar_apagado)
 
 client.run(DISCORD_TOKEN)
