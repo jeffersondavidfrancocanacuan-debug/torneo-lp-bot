@@ -2077,6 +2077,27 @@ TIER_COLORES_WEB = {
     'GRANDMASTER': '#e5484d', 'CHALLENGER': '#f5c518', 'UNRANKED': '#6b7280',
 }
 
+# Emblemas oficiales de rango (Community Dragon: espejo publico y gratuito de los
+# assets de Riot, igual que Data Dragon, sin necesidad de API key).
+RANK_EMBLEMA_BASE = 'https://raw.communitydragon.org/latest/plugins/rcp-fe-lol-static-assets/global/default/images/ranked-emblem/emblem-{}.png'
+
+
+def emblema_rango(tier):
+    t = (tier or 'unranked').lower()
+    if t not in ('iron', 'bronze', 'silver', 'gold', 'platinum', 'emerald', 'diamond', 'master', 'grandmaster', 'challenger'):
+        return ''
+    return RANK_EMBLEMA_BASE.format(t)
+
+
+# Datos del servidor de Discord del torneo, para dar credito en la web (footer + credits).
+DISCORD_INVITE_URL = 'https://discord.gg/UHz8hTaETN'
+DISCORD_GUILD_ID = '331997851355709451'
+DISCORD_GUILD_NOMBRE = 'Ｓｃａｒｙ💞Ｌ♡ ｖｅ'
+# Logo oficial del servidor (imagen fija enviada por la directiva), alojado gratis en
+# i.imgur.com (subida anonima, sin API key) para no depender de un asset en el repo.
+DISCORD_GUILD_ICON = 'https://i.imgur.com/PaDbmn0.png'
+DISCORD_GUILD_BANNER = f'https://cdn.discordapp.com/banners/{DISCORD_GUILD_ID}/f6e8674ea85341845e5e3dd8fc48a45a.png?size=1024'
+
 PAGINA_HTML = """
 <!DOCTYPE html>
 <html lang="es">
@@ -2086,7 +2107,7 @@ PAGINA_HTML = """
 <meta http-equiv="refresh" content="60">
 <title>SoloQ Challenge</title>
 <meta property="og:title" content="SoloQ Challenge - Torneo LAN">
-<meta property="og:description" content="Torneo interno de escalado de rango en League of Legends. Blue Shells, Escudos Azules, Aegis y mucho mas.">
+<meta property="og:description" content="Torneo interno de escalado de rango en League of Legends. Blue Shells, Escudos Azules, Aegis y mucho mas. Un proyecto de {{ discord_nombre }}.">
 {% if fondo_url %}<meta property="og:image" content="{{ fondo_url }}">{% endif %}
 {% if icono_destacado %}<link rel="icon" href="{{ icono_destacado }}">{% endif %}
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -2115,6 +2136,7 @@ PAGINA_HTML = """
     100% { transform: translateY(-10vh) scale(0.5); opacity: 0; }
   }
   @keyframes barrido { 0% { background-position: -200px 0; } 100% { background-position: 200px 0; } }
+  @keyframes desfile { 0% { transform: translateX(0); } 100% { transform: translateX(-50%); } }
   html { scroll-behavior: smooth; }
   body {
     background: #05060a; color:#e8e8e8; font-family:'Rajdhani','Segoe UI',Arial,sans-serif;
@@ -2186,7 +2208,10 @@ PAGINA_HTML = """
   .tab-btn.activo { background:#161b22; color:#f5c518; border-color:#f5c518; }
   .tab-panel { display:none; }
   .tab-panel.activo { display:block; animation: aparecer .4s ease-out; }
-  .categoria { margin-bottom:10px; background:#0e1117; border:1px solid #20242e; border-top:3px solid #f5c518; border-radius:0 10px 10px 10px; padding:22px 22px 26px; }
+  .categoria { margin-bottom:10px; background:#0e1117; border:1px solid #20242e; border-top:3px solid #f5c518; border-radius:0 10px 10px 10px; padding:22px 22px 26px; position:relative; overflow:hidden; }
+  .categoria.con-arte { background-size:cover; background-position:center 30%; }
+  .categoria.con-arte::before { content:""; position:absolute; inset:0; background:linear-gradient(160deg, rgba(14,17,23,0.94), rgba(14,17,23,0.88)); pointer-events:none; }
+  .categoria.con-arte > * { position:relative; z-index:1; }
   .categoria h2 { border-left:5px solid #f5c518; padding-left:12px; font-size:1.3em; margin-top:0; letter-spacing:1px; }
   .categoria h2 .sub { color:#7a8291; font-size:0.6em; font-family:'Rajdhani',sans-serif; margin-left:8px; letter-spacing:0; }
   .podio { display:flex; justify-content:center; align-items:flex-end; gap:14px; margin:8px 0 30px; flex-wrap:wrap; }
@@ -2202,8 +2227,11 @@ PAGINA_HTML = """
   .podio-medalla { font-size:2em; }
   .podio-card .nombre { font-family:'Rajdhani',sans-serif; font-weight:700; margin-top:6px; font-size:1.05em; }
   .podio-card .pts { color:#f5c518; font-size:1.3em; font-weight:800; margin-top:6px; font-family:'Cinzel',serif; }
+  .rango-fila { display:flex; align-items:center; justify-content:center; gap:6px; margin-top:8px; }
+  .emblema-rango { width:26px; height:26px; object-fit:contain; filter:drop-shadow(0 0 4px rgba(0,0,0,0.6)); }
+  .emblema-rango.chico { width:20px; height:20px; }
   .tier-badge {
-    display:inline-block; margin-top:8px; padding:2px 10px; border:1px solid #6b7280; border-radius:12px;
+    display:inline-block; padding:2px 10px; border:1px solid #6b7280; border-radius:12px;
     font-size:0.72em; font-weight:700; letter-spacing:0.5px; white-space:nowrap;
   }
   .tabla-wrap { overflow-x:auto; }
@@ -2226,8 +2254,29 @@ PAGINA_HTML = """
   .info-card { background:#12151c; border:1px solid #20242e; border-radius:10px; padding:16px; text-align:center; transition:transform .2s, border-color .2s; }
   .info-card:hover { transform: translateY(-3px); border-color:#9b59b6; }
   .info-icono { font-size:1.8em; margin-bottom:6px; }
-  footer { text-align:center; color:#6b7280; margin-top:44px; font-size:0.85em; position:relative; z-index:1; }
+  .galeria-wrap { overflow:hidden; margin:6px 0 4px; -webkit-mask-image:linear-gradient(90deg, transparent, #000 8%, #000 92%, transparent); mask-image:linear-gradient(90deg, transparent, #000 8%, #000 92%, transparent); }
+  .galeria-fila { display:flex; gap:16px; width:max-content; animation: desfile 40s linear infinite; }
+  .galeria-fila img { width:56px; height:56px; border-radius:50%; border:2px solid #2a2f3a; opacity:0.65; transition: opacity .2s, border-color .2s, transform .2s; }
+  .galeria-fila img:hover { opacity:1; border-color:#f5c518; transform: scale(1.12); }
+  footer { text-align:center; color:#9ca3af; margin-top:44px; font-size:0.85em; position:relative; z-index:1; }
   footer .divisor { max-width:400px; margin-left:auto; margin-right:auto; }
+  .creditos {
+    max-width:640px; margin:0 auto; padding:26px 24px; border-radius:14px; border:1px solid #2a2f3a;
+    position:relative; overflow:hidden; background:#0e1117;
+  }
+  .creditos.con-banner { background-size:cover; background-position:center; }
+  .creditos.con-banner::before { content:""; position:absolute; inset:0; background:linear-gradient(180deg, rgba(5,6,10,0.55), rgba(5,6,10,0.93)); }
+  .creditos > * { position:relative; z-index:1; }
+  .creditos-servidor { display:flex; align-items:center; justify-content:center; gap:12px; margin-bottom:14px; }
+  .creditos-servidor img { width:44px; height:44px; border-radius:50%; border:2px solid #f5c518; }
+  .creditos-servidor .nombre { color:#f5c518; font-weight:700; font-size:1.1em; font-family:'Cinzel',serif; }
+  .btn-discord {
+    display:inline-flex; align-items:center; gap:8px; margin-top:10px; padding:10px 22px;
+    background:#5865F2; color:#fff; text-decoration:none; border-radius:22px; font-weight:700;
+    font-family:'Rajdhani',sans-serif; letter-spacing:0.5px; transition: transform .2s, box-shadow .2s;
+  }
+  .btn-discord:hover { transform: translateY(-2px); box-shadow:0 6px 18px rgba(88,101,242,0.45); }
+  .creditos-riot { margin-top:16px; font-size:0.78em; color:#6b7280; }
   @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after { animation-duration:0.01ms !important; animation-iteration-count:1 !important; transition-duration:0.01ms !important; }
   }
@@ -2241,6 +2290,7 @@ PAGINA_HTML = """
     .podio-card { width:120px; padding:14px 10px; }
     .podio-card.p1 { width:136px; }
     .hex-corner { width:34px; height:34px; }
+    .galeria-fila img { width:44px; height:44px; }
   }
 </style>
 </head>
@@ -2274,6 +2324,15 @@ PAGINA_HTML = """
   {% endif %}
 </header>
 
+{% if campeones_galeria %}
+<div class="galeria-wrap">
+  <div class="galeria-fila">
+    {% for c in campeones_galeria %}<img src="{{ c.icono }}" title="{{ c.nombre }}" alt="{{ c.nombre }}">{% endfor %}
+    {% for c in campeones_galeria %}<img src="{{ c.icono }}" title="{{ c.nombre }}" alt="{{ c.nombre }}">{% endfor %}
+  </div>
+</div>
+{% endif %}
+
 {% macro podio(lista) %}
 {% if lista %}
 <div class="podio">
@@ -2282,7 +2341,11 @@ PAGINA_HTML = """
     {% if loop.index == 1 %}<div class="podio-corona">👑</div>{% endif %}
     <div class="podio-medalla">{{ '🥇' if loop.index==1 else ('🥈' if loop.index==2 else '🥉') }}</div>
     <div class="nombre">{{ j.nombre }}</div>
-    <span class="tier-badge" style="border-color:{{ tier_colors.get(j.tier_actual,'#6b7280') }}; color:{{ tier_colors.get(j.tier_actual,'#6b7280') }};">{{ j.tier_actual }} {{ j.rank_actual }}</span>
+    <div class="rango-fila">
+      {% set emb = emblema_rango(j.tier_actual) %}
+      {% if emb %}<img class="emblema-rango" src="{{ emb }}" alt="{{ j.tier_actual }}">{% endif %}
+      <span class="tier-badge" style="border-color:{{ tier_colors.get(j.tier_actual,'#6b7280') }}; color:{{ tier_colors.get(j.tier_actual,'#6b7280') }};">{{ j.tier_actual }} {{ j.rank_actual }}</span>
+    </div>
     <div class="pts">{{ j.total }} pts</div>
   </div>
   {% endfor %}
@@ -2301,10 +2364,16 @@ PAGINA_HTML = """
   {% if max_total and max_total > 0 %}{% set pct = (j.total / max_total * 100) %}{% endif %}
   {% if pct < 0 %}{% set pct = 0 %}{% endif %}
   {% if pct > 100 %}{% set pct = 100 %}{% endif %}
+  {% set emb = emblema_rango(j.tier_actual) %}
   <tr>
     <td class="{{ 'pos1' if loop.index==1 else ('pos2' if loop.index==2 else ('pos3' if loop.index==3 else '')) }}">{{ loop.index }}</td>
     <td>{{ j.nombre }}</td>
-    <td><span class="tier-badge" style="border-color:{{ tier_colors.get(j.tier_actual,'#6b7280') }}; color:{{ tier_colors.get(j.tier_actual,'#6b7280') }};">{{ j.tier_actual }} {{ j.rank_actual }}</span></td>
+    <td>
+      <div class="rango-fila" style="justify-content:flex-start;">
+        {% if emb %}<img class="emblema-rango chico" src="{{ emb }}" alt="{{ j.tier_actual }}">{% endif %}
+        <span class="tier-badge" style="border-color:{{ tier_colors.get(j.tier_actual,'#6b7280') }}; color:{{ tier_colors.get(j.tier_actual,'#6b7280') }};">{{ j.tier_actual }} {{ j.rank_actual }}</span>
+      </div>
+    </td>
     <td><div class="barra"><div class="barra-fill" style="width:{{ pct|round(1) }}%; background:{{ tier_colors.get(j.tier_actual,'#f5c518') }};"></div></div></td>
     <td>{{ j.escalado }}</td>
     <td>+{{ j.bonus }}</td>
@@ -2374,7 +2443,7 @@ PAGINA_HTML = """
   {% endif %}
 
   <div class="divisor"><span>◆</span></div>
-  <div class="categoria">
+  <div class="categoria con-arte" {% if fondo_secundario %}style="background-image:url('{{ fondo_secundario }}');"{% endif %}>
     <h2>Como conseguir un Escudo Azul</h2>
     <div class="info-grid">
       <div class="info-card"><div class="info-icono">🔥</div><div>Pentakill / Cuadrakill</div></div>
@@ -2390,7 +2459,22 @@ PAGINA_HTML = """
 </div>
 <footer>
   <div class="divisor"><span>◆</span></div>
-  Actualizado automaticamente - Pagina se refresca cada 60 segundos
+  <div class="creditos {{ 'con-banner' if discord_banner else '' }}" {% if discord_banner %}style="background-image:url('{{ discord_banner }}');"{% endif %}>
+    {% if discord_nombre %}
+    <div class="creditos-servidor">
+      {% if discord_icono %}<img src="{{ discord_icono }}" alt="">{% endif %}
+      <span>Un proyecto de la comunidad de<br><span class="nombre">{{ discord_nombre }}</span></span>
+    </div>
+    {% endif %}
+    {% if discord_invite %}
+    <a class="btn-discord" href="{{ discord_invite }}" target="_blank" rel="noopener">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M20.317 4.369a19.79 19.79 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.058a.082.082 0 0 0 .031.056 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028 14.09 14.09 0 0 0 1.226-1.994.076.076 0 0 0-.041-.106 13.107 13.107 0 0 1-1.872-.892.077.077 0 0 1-.008-.128c.126-.094.252-.192.372-.291a.074.074 0 0 1 .077-.01c3.927 1.793 8.18 1.793 12.061 0a.073.073 0 0 1 .078.01c.12.099.246.198.373.292a.077.077 0 0 1-.006.127c-.598.35-1.22.645-1.873.893a.076.076 0 0 0-.04.106c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.029 19.84 19.84 0 0 0 6.002-3.03.077.077 0 0 0 .032-.055c.5-5.177-.838-9.674-3.548-13.662a.06.06 0 0 0-.031-.028zM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.955 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.946 2.418-2.157 2.418z"/></svg>
+      Unete a nuestro Discord
+    </a>
+    {% endif %}
+    <div class="creditos-riot">Arte e iconos de campeones cortesia de Riot Games (Data Dragon / Community Dragon). SoloQ Challenge no esta afiliado a Riot Games.</div>
+  </div>
+  <div style="margin-top:18px;">Actualizado automaticamente - Pagina se refresca cada 60 segundos</div>
 </footer>
 <script>
 function mostrarTab(id, btn) {
@@ -2427,6 +2511,7 @@ def home():
     db = cargar_db()
     high, low, pendientes, sin_voz = calcular_tabla(db)
     campeon_destacado = random.choice(CAMPEONES_POOL)
+    campeon_secundario = random.choice(CAMPEONES_POOL)
     fin_torneo_iso = None
     if db.get('torneo_iniciado'):
         try:
@@ -2439,15 +2524,26 @@ def home():
          'delay': round(random.uniform(0, 15), 1), 'size': random.randint(2, 4)}
         for _ in range(26)
     ]
+    campeones_galeria = [
+        {'nombre': c, 'icono': icono_campeon(c)}
+        for c in random.sample(CAMPEONES_POOL, min(20, len(CAMPEONES_POOL)))
+    ]
     return render_template_string(PAGINA_HTML, high=high, low=low, pendientes=pendientes, sin_voz=sin_voz,
                                    duracion=DURACION_TORNEO, estado_torneo=calcular_estado_torneo(db),
                                    premio=PREMIO_GANADOR_USD,
                                    fondo_url=splash_campeon(campeon_destacado),
+                                   fondo_secundario=splash_campeon(campeon_secundario),
                                    campeon_destacado=campeon_destacado,
                                    icono_destacado=icono_campeon(campeon_destacado),
                                    tier_colors=TIER_COLORES_WEB,
+                                   emblema_rango=emblema_rango,
+                                   campeones_galeria=campeones_galeria,
                                    fin_torneo_iso=fin_torneo_iso,
-                                   particulas=particulas)
+                                   particulas=particulas,
+                                   discord_nombre=DISCORD_GUILD_NOMBRE,
+                                   discord_invite=DISCORD_INVITE_URL,
+                                   discord_icono=DISCORD_GUILD_ICON,
+                                   discord_banner=DISCORD_GUILD_BANNER)
 
 @app.route('/api/tabla')
 def api_tabla():
