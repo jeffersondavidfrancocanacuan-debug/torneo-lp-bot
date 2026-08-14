@@ -825,6 +825,13 @@ def calcular_tabla(db):
         total = progreso_escalado + data.get('bonus_total', 0) - data.get('castigos_total', 0)
         tiempo_voz = round(data.get('tiempo_voz_min', 0), 1)
         pendientes_castigo = castigos_pendientes_de(data)
+        wins = info.get('wins', 0)
+        losses = info.get('losses', 0)
+        partidas = wins + losses
+        winrate = round((wins / partidas) * 100) if partidas else 0
+        avatar_campeon = icono_campeon(CAMPEONES_POOL[hash(puuid) % len(CAMPEONES_POOL)])
+        game_name, _, tag_line = data['nombre'].partition('#')
+        opgg_url = f'https://www.op.gg/summoners/lan/{game_name}-{tag_line}' if tag_line else ''
         jugador = {
             'puuid': puuid,
             'discord_id': data['discord_id'],
@@ -847,6 +854,13 @@ def calcular_tabla(db):
             'aegis_activo': aegis_activo(data),
             'aegis_restante': round(aegis_restante_horas(data), 1),
             'castigos_pendientes': len(pendientes_castigo),
+            'wins': wins,
+            'losses': losses,
+            'partidas': partidas,
+            'winrate': winrate,
+            'racha': data.get('racha_victorias', 0),
+            'avatar': avatar_campeon,
+            'opgg_url': opgg_url,
         }
         if jugador['estado'] == 'pendiente' or not jugador['elo']:
             pendientes.append(jugador)
@@ -2112,29 +2126,61 @@ PAGINA_HTML = """
 {% if icono_destacado %}<link rel="icon" href="{{ icono_destacado }}">{% endif %}
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;800&family=Barlow+Condensed:wght@500;600;700;800&family=Rajdhani:wght@500;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Anton&family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
 <style>
+  :root { --acc:#d7ff3a; --acc-dim:#a8cc1f; --bg:#0a0a0c; --panel:#141416; --panel2:#1a1a1d; --line:#26262a; --muted:#8a8a92; }
   * { box-sizing: border-box; }
   .icon { width:1em; height:1em; display:inline-block; vertical-align:-0.15em; stroke:currentColor; fill:none; stroke-width:1.7; stroke-linecap:round; stroke-linejoin:round; }
-  .uc { font-family:'Barlow Condensed',sans-serif; text-transform:uppercase; letter-spacing:1.5px; }
-  #inicio, #escudos, #tabla { scroll-margin-top:66px; }
-  .navbar { position:sticky; top:0; z-index:30; background:#0a0d12ee; backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px); border-bottom:1px solid #20242e; }
-  .navbar-inner { max-width:1150px; margin:0 auto; padding:0 20px; display:flex; align-items:center; justify-content:space-between; height:56px; gap:14px; overflow-x:auto; }
-  .navbar-marca { display:flex; align-items:center; gap:8px; color:#f5c518; font-family:'Cinzel',serif; font-weight:800; font-size:1.05em; letter-spacing:1px; white-space:nowrap; }
-  .navbar-marca .icon { width:22px; height:22px; }
-  .navbar-links { display:flex; gap:26px; white-space:nowrap; }
-  .navbar-links a { display:inline-flex; align-items:center; gap:6px; color:#9ca3af; text-decoration:none; font-family:'Barlow Condensed',sans-serif; font-weight:600; text-transform:uppercase; letter-spacing:1.5px; font-size:0.92em; padding:4px 2px; border-bottom:2px solid transparent; transition: color .2s, border-color .2s; }
-  .navbar-links a:hover { color:#f5c518; border-color:#f5c518; }
-  .navbar-links a .icon { width:15px; height:15px; }
-  .eyebrow { text-transform:uppercase; letter-spacing:3px; color:#f5c518; font-family:'Barlow Condensed',sans-serif; font-weight:700; font-size:0.85em; opacity:.9; }
-  .btn-outline { display:inline-flex; align-items:center; gap:8px; margin-top:22px; padding:12px 30px; background:transparent; border:1px solid #f5c518; color:#f5c518; text-decoration:none; font-family:'Barlow Condensed',sans-serif; font-weight:700; text-transform:uppercase; letter-spacing:2px; font-size:0.95em; transition: background .2s, color .2s; cursor:pointer; }
-  .btn-outline:hover { background:#f5c518; color:#0a0d12; }
-  .medal-badge { width:34px; height:34px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-family:'Cinzel',serif; font-weight:800; font-size:1.05em; margin:6px auto 0; border:2px solid currentColor; background:#0e1117; }
-  .medal-badge.p1 { color:#f5c518; box-shadow:0 0 14px rgba(245,197,24,.5); }
+  .uc { font-family:'Inter',sans-serif; text-transform:uppercase; letter-spacing:1.5px; }
+  .disp { font-family:'Anton','Inter',sans-serif; font-weight:400; letter-spacing:0.5px; }
+  #inicio, #escudos, #tabla { scroll-margin-top:74px; }
+  .navbar { position:sticky; top:0; z-index:30; background:#000000f0; backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px); border-bottom:1px solid var(--line); }
+  .navbar-inner { max-width:1250px; margin:0 auto; padding:0 20px; display:flex; align-items:center; justify-content:space-between; height:64px; gap:16px; overflow-x:auto; }
+  .navbar-marca { display:flex; align-items:center; gap:10px; color:#fff; font-family:'Anton',sans-serif; font-weight:400; font-size:1.15em; letter-spacing:0.5px; white-space:nowrap; }
+  .navbar-marca .icon { width:24px; height:24px; color:var(--acc); }
+  .navbar-chip { display:inline-flex; align-items:center; gap:5px; background:var(--panel2); border:1px solid var(--line); color:#d1d1d6; padding:6px 12px; border-radius:7px; font-size:0.78em; font-weight:700; text-transform:uppercase; letter-spacing:0.5px; white-space:nowrap; }
+  .navbar-links { display:flex; gap:6px; white-space:nowrap; align-items:center; }
+  .navbar-links a { display:inline-flex; align-items:center; gap:6px; color:#9a9aa2; text-decoration:none; font-family:'Inter',sans-serif; font-weight:600; letter-spacing:0.2px; font-size:0.9em; padding:8px 14px; border-radius:7px; transition: color .2s, background .2s; }
+  .navbar-links a:hover { color:#fff; }
+  .navbar-links a.activo { background:var(--acc); color:#0a0a0c; font-weight:700; }
+  .navbar-links a .icon { width:14px; height:14px; }
+  .navbar-right { display:flex; align-items:center; gap:12px; }
+  .navbar-countdown { display:flex; gap:6px; font-family:'Anton',sans-serif; font-size:0.95em; color:#fff; white-space:nowrap; }
+  .navbar-countdown span { color:var(--acc); }
+  .eyebrow { text-transform:uppercase; letter-spacing:3px; color:var(--acc); font-family:'Inter',sans-serif; font-weight:700; font-size:0.85em; opacity:.9; }
+  .btn-outline { display:inline-flex; align-items:center; gap:8px; margin-top:22px; padding:12px 30px; background:var(--acc); border:1px solid var(--acc); color:#0a0a0c; text-decoration:none; font-family:'Inter',sans-serif; font-weight:800; text-transform:uppercase; letter-spacing:1.5px; font-size:0.92em; transition: filter .2s; cursor:pointer; border-radius:8px; }
+  .btn-outline:hover { filter:brightness(1.1); }
+  .medal-badge { width:30px; height:30px; border-radius:8px; display:flex; align-items:center; justify-content:center; font-family:'Anton',sans-serif; font-weight:400; font-size:1em; border:1.5px solid currentColor; background:#0e1117; }
+  .medal-badge.p1 { color:var(--acc); box-shadow:0 0 14px rgba(215,255,58,.35); }
   .medal-badge.p2 { color:#c0c0c0; }
   .medal-badge.p3 { color:#cd7f32; }
-  .icon-circle { color:#f5c518; display:inline-flex; flex-shrink:0; margin-top:2px; }
+  .icon-circle { color:var(--acc); display:inline-flex; flex-shrink:0; margin-top:2px; }
   .icon-circle .icon { width:18px; height:18px; }
+  .avatar { width:38px; height:38px; border-radius:50%; object-fit:cover; border:1.5px solid var(--line); flex-shrink:0; }
+  .avatar.big { width:52px; height:52px; border:2px solid var(--line); }
+  .flame { width:1em; height:1em; display:inline-block; vertical-align:-0.12em; color:#ff6a3d; }
+  .lp-fila { display:flex; align-items:baseline; gap:6px; }
+  .lp-num { font-family:'Anton',sans-serif; font-weight:400; }
+  .wr-bar { width:100%; height:6px; border-radius:4px; background:#ed4245; overflow:hidden; display:flex; }
+  .wr-bar .win { height:100%; background:var(--acc); }
+  .delta-up { color:var(--acc); font-weight:700; }
+  .delta-down { color:#ed4245; font-weight:700; }
+  .racha-badge { display:inline-flex; align-items:center; gap:4px; padding:3px 9px; border-radius:6px; background:#1c2414; color:var(--acc); font-weight:700; font-size:0.85em; border:1px solid #2e3a1c; }
+  .racha-badge .icon { width:12px; height:12px; }
+  .jugador-fila { display:flex; align-items:center; gap:10px; }
+  .jugador-fila .nombres { line-height:1.25; }
+  .jugador-fila .principal { font-weight:700; color:#fff; font-size:0.95em; }
+  .jugador-fila .tag { color:#8a8a92; font-size:0.72em; }
+  .btn-opgg { display:inline-flex; align-items:center; justify-content:center; padding:6px 14px; background:var(--panel2); border:1px solid var(--line); color:#e5e5ea; text-decoration:none; border-radius:6px; font-size:0.78em; font-weight:700; letter-spacing:0.5px; transition:border-color .2s, color .2s; }
+  .btn-opgg:hover { border-color:var(--acc); color:var(--acc); }
+  .buscador { display:flex; align-items:center; gap:8px; background:var(--panel2); border:1px solid var(--line); border-radius:8px; padding:8px 14px; color:#e5e5ea; }
+  .buscador input { background:transparent; border:none; outline:none; color:#e5e5ea; font-family:'Inter',sans-serif; font-size:0.9em; width:170px; }
+  .buscador input::placeholder { color:var(--muted); }
+  .buscador .icon { width:15px; height:15px; color:var(--muted); }
+  .filtros-fila { display:flex; flex-wrap:wrap; gap:10px; align-items:center; justify-content:space-between; margin:18px 0 4px; }
+  .filtros-izq { display:flex; flex-wrap:wrap; gap:10px; align-items:center; }
+  .badge-castigos { display:inline-flex; align-items:center; gap:6px; padding:8px 14px; background:var(--panel2); border:1px solid var(--line); border-radius:8px; color:#e5e5ea; font-size:0.85em; font-weight:600; }
+  .badge-castigos b { color:#ed4245; }
   @keyframes brillo {
     0%, 100% { text-shadow: 0 0 18px rgba(245,197,24,0.55), 0 0 2px rgba(245,197,24,0.9); }
     50% { text-shadow: 0 0 34px rgba(245,197,24,0.95), 0 0 6px rgba(245,197,24,1); }
@@ -2159,31 +2205,31 @@ PAGINA_HTML = """
   @keyframes desfile { 0% { transform: translateX(0); } 100% { transform: translateX(-50%); } }
   html { scroll-behavior: smooth; }
   body {
-    background: #05060a; color:#e8e8e8; font-family:'Rajdhani','Segoe UI',Arial,sans-serif;
+    background: var(--bg); color:#e8e8ea; font-family:'Inter','Segoe UI',Arial,sans-serif;
     margin:0; padding:0 0 60px; position:relative; min-height:100vh;
   }
   body::after {
     content:""; position:fixed; inset:0; pointer-events:none; z-index:0;
-    background: radial-gradient(circle at 10% 0%, rgba(155,89,182,0.10), transparent 40%),
-                radial-gradient(circle at 90% 100%, rgba(245,197,24,0.08), transparent 40%),
+    background: radial-gradient(circle at 10% 0%, rgba(215,255,58,0.06), transparent 40%),
+                radial-gradient(circle at 90% 100%, rgba(215,255,58,0.05), transparent 40%),
                 radial-gradient(ellipse at 50% 50%, transparent 55%, rgba(0,0,0,0.55) 100%);
   }
   .particulas { position:fixed; inset:0; overflow:hidden; z-index:0; pointer-events:none; }
   .particulas span {
-    position:absolute; bottom:-10px; border-radius:50%; background:#f5c518;
-    box-shadow:0 0 6px 1px rgba(245,197,24,0.9); animation-name:subir; animation-iteration-count:infinite;
+    position:absolute; bottom:-10px; border-radius:50%; background:var(--acc);
+    box-shadow:0 0 6px 1px rgba(215,255,58,0.7); animation-name:subir; animation-iteration-count:infinite;
     animation-timing-function:linear;
   }
-  h1, h2, h3 { font-family:'Cinzel', 'Segoe UI', serif; }
+  h1, h2, h3 { font-family:'Anton', 'Segoe UI', sans-serif; font-weight:400; }
   header {
     position: relative; overflow: hidden; padding:56px 20px 30px; text-align:center;
-    border-bottom:3px solid #f5c518; z-index:1;
-    background: linear-gradient(rgba(5,6,10,0.82), rgba(5,6,10,0.95)), {% if fondo_url %}url('{{ fondo_url }}'){% endif %};
+    border-bottom:1px solid var(--line); z-index:1;
+    background: linear-gradient(rgba(10,10,12,0.85), rgba(10,10,12,0.97)), {% if fondo_url %}url('{{ fondo_url }}'){% endif %};
     background-size: cover; background-position: center 20%;
   }
   header::before {
     content: ""; position: absolute; inset: 0;
-    background: radial-gradient(circle at 50% -10%, rgba(245,197,24,0.28), transparent 60%);
+    background: radial-gradient(circle at 50% -10%, rgba(215,255,58,0.16), transparent 60%);
     pointer-events: none;
   }
   .hex-corner { position:absolute; width:52px; height:52px; opacity:0.55; z-index:1; }
@@ -2192,63 +2238,69 @@ PAGINA_HTML = """
   .hex-corner.bl { bottom:12px; left:12px; transform:scaleY(-1); }
   .hex-corner.br { bottom:12px; right:12px; transform:scale(-1,-1); }
   .logo-fila { display:flex; align-items:center; justify-content:center; gap:16px; position:relative; z-index:1; }
-  .logo-escudo { font-size: 2.4em; color:#c9a8e0; display:inline-block; animation: flotar 3.5s ease-in-out infinite; filter: drop-shadow(0 0 8px rgba(155,89,182,0.8)); }
+  .logo-escudo { font-size: 2.4em; color:var(--acc); display:inline-block; animation: flotar 3.5s ease-in-out infinite; filter: drop-shadow(0 0 8px rgba(215,255,58,0.5)); }
   .logo-escudo .icon { stroke-width:1.4; }
-  header h1 { margin:0; font-size:3em; color:#f5c518; letter-spacing:2px; animation: brillo 2.6s ease-in-out infinite; }
-  header p.subtitulo { color:#c8ccd4; margin-top:10px; position:relative; z-index:1; font-size:1.05em; letter-spacing:0.5px; }
+  header h1 { margin:0; font-size:3.2em; color:#fff; letter-spacing:1px; animation: brillo 2.6s ease-in-out infinite; }
+  header p.subtitulo { color:#a3a3ab; margin-top:10px; position:relative; z-index:1; font-size:1.05em; letter-spacing:0.5px; }
   .estado-fila { display:flex; flex-wrap:wrap; gap:10px; justify-content:center; margin-top:18px; position:relative; z-index:1; }
-  .estado { display:inline-block; padding:8px 18px; background:#1f2937cc; border:1px solid #f5c518; border-radius:20px; color:#f5c518; font-weight:600; font-size:0.9em; animation: pulso 2.4s infinite; }
-  .premio { display:inline-block; padding:8px 18px; background:#132a1ccc; border:1px solid #3ba55d; border-radius:20px; color:#3ba55d; font-weight:600; font-size:0.9em; }
-  .countdown { display:inline-flex; align-items:center; gap:6px; padding:8px 18px; background:#241a33cc; border:1px solid #9b59b6; border-radius:20px; color:#c9a8e0; font-weight:600; font-size:0.9em; }
+  .estado { display:inline-block; padding:8px 18px; background:#18181bcc; border:1px solid var(--acc); border-radius:8px; color:var(--acc); font-weight:600; font-size:0.9em; animation: pulso 2.4s infinite; }
+  .premio { display:inline-block; padding:8px 18px; background:#132a1ccc; border:1px solid #3ba55d; border-radius:8px; color:#3ba55d; font-weight:600; font-size:0.9em; }
+  .countdown { display:inline-flex; align-items:center; gap:6px; padding:8px 18px; background:#18181bcc; border:1px solid var(--line); border-radius:8px; color:#e5e5ea; font-weight:600; font-size:0.9em; }
   .stats { display:flex; justify-content:center; gap:16px; margin-top:26px; flex-wrap:wrap; position:relative; z-index:1; }
   .stat-card {
-    background:#161b22cc; backdrop-filter: blur(2px); border-radius:10px; padding:14px 22px; min-width:120px;
-    text-align:center; border:1px solid #2a2f3a; transition: transform 0.2s ease, border-color 0.2s ease;
+    background:#141416cc; backdrop-filter: blur(2px); border-radius:10px; padding:14px 22px; min-width:120px;
+    text-align:center; border:1px solid var(--line); transition: transform 0.2s ease, border-color 0.2s ease;
     animation: aparecer .5s ease-out both;
   }
   .stat-card:nth-child(1) { animation-delay: .05s; }
   .stat-card:nth-child(2) { animation-delay: .15s; }
   .stat-card:nth-child(3) { animation-delay: .25s; }
-  .stat-card:hover { transform: translateY(-4px); border-color:#f5c518; }
-  .stat-card .num { font-size:1.7em; color:#f5c518; font-weight:800; font-family:'Cinzel',serif; }
-  .stat-card .label { font-size:0.72em; color:#9ca3af; text-transform:uppercase; letter-spacing:1px; }
-  .destacado { display:flex; align-items:center; justify-content:center; gap:10px; margin-top:20px; position:relative; z-index:1; color:#9ca3af; font-size:0.85em; }
-  .destacado img { width:34px; height:34px; border-radius:50%; border:2px solid #9b59b6; animation: girar 6s linear infinite; }
+  .stat-card:hover { transform: translateY(-4px); border-color:var(--acc); }
+  .stat-card .num { font-size:1.8em; color:var(--acc); font-weight:400; font-family:'Anton',sans-serif; }
+  .stat-card .label { font-size:0.72em; color:#9a9aa2; text-transform:uppercase; letter-spacing:1px; }
+  .destacado { display:flex; align-items:center; justify-content:center; gap:10px; margin-top:20px; position:relative; z-index:1; color:#9a9aa2; font-size:0.85em; }
+  .destacado img { width:34px; height:34px; border-radius:50%; border:2px solid var(--acc); animation: girar 6s linear infinite; }
   .contenedor { max-width:1150px; margin:0 auto; padding:0 20px; position:relative; z-index:1; }
   .divisor { display:flex; align-items:center; gap:12px; margin:38px 0 20px; }
   .divisor::before, .divisor::after { content:""; flex:1; height:1px; background:linear-gradient(90deg, transparent, #f5c51899, transparent); }
   .divisor span { color:#f5c518; font-size:1.1em; }
-  .aviso { background:#1f2937cc; border-left:4px solid #f5c518; padding:14px 18px; border-radius:6px; margin-top:24px; color:#d1d5db; display:flex; gap:10px; align-items:flex-start; }
-  .tabs { display:flex; justify-content:center; gap:8px; margin:8px 0 0; }
+  .aviso { background:#141416cc; border-left:4px solid var(--acc); padding:14px 18px; border-radius:6px; margin-top:24px; color:#d1d1d6; display:flex; gap:10px; align-items:flex-start; }
+  .tabs { display:inline-flex; gap:4px; margin:8px 0 0; background:var(--panel2); padding:4px; border-radius:9px; }
   .tab-btn {
     display:inline-flex; align-items:center; gap:8px;
-    background:#161b22; border:1px solid #2a2f3a; border-bottom:none; color:#c8ccd4; padding:10px 26px;
-    border-radius:10px 10px 0 0; cursor:pointer; font-family:'Barlow Condensed',sans-serif; font-weight:700;
-    text-transform:uppercase; font-size:1.05em; letter-spacing:1.5px; transition: all .2s;
+    background:transparent; border:none; color:#9a9aa2; padding:8px 22px;
+    border-radius:6px; cursor:pointer; font-family:'Inter',sans-serif; font-weight:700;
+    text-transform:uppercase; font-size:0.85em; letter-spacing:1px; transition: all .2s;
   }
-  .tab-btn:hover { color:#f5c518; border-color:#f5c518; }
-  .tab-btn.activo { background:#161b22; color:#f5c518; border-color:#f5c518; }
+  .tab-btn:hover { color:#fff; }
+  .tab-btn.activo { background:var(--acc); color:#0a0a0c; }
   .tab-panel { display:none; }
   .tab-panel.activo { display:block; animation: aparecer .4s ease-out; }
-  .categoria { margin-bottom:10px; background:#0e1117; border:1px solid #20242e; border-top:3px solid #f5c518; border-radius:0 10px 10px 10px; padding:22px 22px 26px; position:relative; overflow:hidden; }
+  .categoria { margin-bottom:10px; background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:22px 22px 26px; position:relative; overflow:hidden; }
   .categoria.con-arte { background-size:cover; background-position:center 30%; }
-  .categoria.con-arte::before { content:""; position:absolute; inset:0; background:linear-gradient(160deg, rgba(14,17,23,0.94), rgba(14,17,23,0.88)); pointer-events:none; }
+  .categoria.con-arte::before { content:""; position:absolute; inset:0; background:linear-gradient(160deg, rgba(10,10,12,0.94), rgba(10,10,12,0.9)); pointer-events:none; }
   .categoria.con-arte > * { position:relative; z-index:1; }
-  .categoria h2 { border-left:5px solid #f5c518; padding-left:12px; font-size:1.3em; margin-top:0; letter-spacing:1px; }
-  .categoria h2 .sub { color:#7a8291; font-size:0.6em; font-family:'Rajdhani',sans-serif; margin-left:8px; letter-spacing:0; }
-  .podio { display:flex; justify-content:center; align-items:flex-end; gap:14px; margin:8px 0 30px; flex-wrap:wrap; }
+  .categoria h2 { border-left:4px solid var(--acc); padding-left:12px; font-size:1.3em; margin-top:0; letter-spacing:0.5px; }
+  .categoria h2 .sub { color:#7a7a82; font-size:0.55em; font-family:'Inter',sans-serif; font-weight:600; margin-left:8px; letter-spacing:0; text-transform:none; }
+  .podio { display:flex; justify-content:center; align-items:stretch; gap:16px; margin:18px 0 30px; flex-wrap:wrap; }
   .podio-card {
-    background:linear-gradient(160deg,#171c26,#0e1117); border:1px solid #2a2f3a; border-radius:12px;
-    padding:18px 16px 16px; text-align:center; width:150px; position:relative; transition:transform .25s;
+    background:var(--panel); border:1px solid var(--line); border-radius:14px;
+    padding:20px 20px 18px; text-align:left; width:230px; position:relative; transition:transform .25s;
   }
   .podio-card:hover { transform: translateY(-6px); }
-  .podio-card.p1 { order:2; padding-top:32px; width:172px; border-color:#f5c518; box-shadow:0 0 26px rgba(245,197,24,0.32); }
-  .podio-card.p2 { order:1; border-color:#c0c0c0; }
-  .podio-card.p3 { order:3; border-color:#cd7f32; }
-  .podio-corona { position:absolute; top:-22px; left:50%; transform:translateX(-50%); font-size:1.6em; color:#f5c518; animation: flotar 3s ease-in-out infinite; }
-  .podio-card .nombre { font-family:'Rajdhani',sans-serif; font-weight:700; margin-top:6px; font-size:1.05em; }
-  .podio-card .pts { color:#f5c518; font-size:1.3em; font-weight:800; margin-top:6px; font-family:'Cinzel',serif; }
-  .rango-fila { display:flex; align-items:center; justify-content:center; gap:6px; margin-top:8px; }
+  .podio-card.p1 { border-color:var(--acc); box-shadow:0 0 30px rgba(215,255,58,.12); }
+  .podio-card.p2 { }
+  .podio-card.p3 { }
+  .podio-cabecera { display:flex; align-items:center; justify-content:space-between; }
+  .podio-jugador { display:flex; align-items:center; gap:10px; margin-top:10px; }
+  .podio-card .nombre { font-family:'Inter',sans-serif; font-weight:700; font-size:1em; color:#fff; }
+  .podio-card .subnombre { font-size:0.75em; color:#8a8a92; margin-top:1px; }
+  .podio-card .pts { font-size:2.1em; margin-top:16px; }
+  .podio-stats { display:flex; justify-content:space-between; margin-top:16px; gap:6px; }
+  .podio-stats .pstat { text-align:left; }
+  .podio-stats .pstat .v { font-weight:700; font-size:0.92em; color:#e5e5ea; }
+  .podio-stats .pstat .l { font-size:0.68em; color:#8a8a92; text-transform:uppercase; letter-spacing:0.5px; margin-top:1px; }
+  .rango-fila { display:flex; align-items:center; justify-content:flex-start; gap:6px; margin-top:8px; }
   .emblema-rango { width:26px; height:26px; object-fit:contain; filter:drop-shadow(0 0 4px rgba(0,0,0,0.6)); }
   .emblema-rango.chico { width:20px; height:20px; }
   .tier-badge {
@@ -2256,47 +2308,47 @@ PAGINA_HTML = """
     font-size:0.72em; font-weight:700; letter-spacing:0.5px; white-space:nowrap;
   }
   .tabla-wrap { overflow-x:auto; }
-  table { width:100%; border-collapse:collapse; background:#12151c; border-radius:8px; overflow:hidden; min-width:760px; }
-  th, td { padding:12px 14px; text-align:left; border-bottom:1px solid #20242e; }
-  th { background:#1a1f29; color:#f5c518; text-transform:uppercase; font-size:0.75em; letter-spacing:1px; }
+  table { width:100%; border-collapse:collapse; background:var(--panel); border-radius:8px; overflow:hidden; min-width:820px; }
+  th, td { padding:12px 14px; text-align:left; border-bottom:1px solid var(--line); }
+  th { background:var(--panel2); color:#9a9aa2; text-transform:uppercase; font-size:0.72em; letter-spacing:1px; font-weight:700; }
   tr { transition: background 0.15s ease; }
-  tr:hover { background:#1a202c; }
-  .pos1 { color:#f5c518; font-weight:800; }
+  tr:hover { background:#1c1c1f; }
+  .pos1 { color:var(--acc); font-weight:800; }
   .pos2 { color:#c0c0c0; font-weight:800; }
   .pos3 { color:#cd7f32; font-weight:800; }
   .voz-ok { color:#3ba55d; }
   .voz-no { color:#ed4245; }
   .vacio { color:#6b7280; padding:24px; text-align:center; }
   .badge-aegis { display:inline-block; padding:2px 8px; border-radius:10px; font-size:0.72em; font-weight:700; background:#132a1c; color:#3ba55d; border:1px solid #3ba55d; }
-  .badge-shell { display:inline-block; padding:2px 8px; border-radius:10px; font-size:0.72em; font-weight:700; background:#241a33; color:#9b59b6; border:1px solid #9b59b6; margin-left:4px; }
+  .badge-shell { display:inline-block; padding:2px 8px; border-radius:10px; font-size:0.72em; font-weight:700; background:#22240f; color:var(--acc); border:1px solid #3a3d1c; margin-left:4px; }
   .barra { width:90px; height:8px; border-radius:6px; background:#20242e; overflow:hidden; }
   .barra-fill { height:100%; border-radius:6px; transition: width .6s ease; background-size: 40px 100%; background-image: linear-gradient(90deg, rgba(255,255,255,0.15) 25%, transparent 25%, transparent 50%, rgba(255,255,255,0.15) 50%, rgba(255,255,255,0.15) 75%, transparent 75%, transparent); animation: barrido 2s linear infinite; }
   .info-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:12px; }
-  .info-card { background:#12151c; border:1px solid #20242e; border-radius:10px; padding:20px 16px; text-align:center; transition:transform .2s, border-color .2s; }
-  .info-card:hover { transform: translateY(-3px); border-color:#9b59b6; }
-  .info-icono { width:44px; height:44px; margin:0 auto 12px; border-radius:50%; border:1.5px solid #f5c518; display:flex; align-items:center; justify-content:center; color:#f5c518; background:#1a1f29; }
+  .info-card { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:20px 16px; text-align:center; transition:transform .2s, border-color .2s; }
+  .info-card:hover { transform: translateY(-3px); border-color:var(--acc); }
+  .info-icono { width:44px; height:44px; margin:0 auto 12px; border-radius:50%; border:1.5px solid var(--acc); display:flex; align-items:center; justify-content:center; color:var(--acc); background:var(--panel2); }
   .info-icono .icon { width:22px; height:22px; }
-  .titulo-card { font-family:'Barlow Condensed',sans-serif; text-transform:uppercase; letter-spacing:1px; font-weight:700; font-size:0.98em; color:#d1d5db; }
+  .titulo-card { font-family:'Inter',sans-serif; text-transform:uppercase; letter-spacing:0.5px; font-weight:700; font-size:0.9em; color:#d1d1d6; }
   .galeria-wrap { overflow:hidden; margin:6px 0 4px; -webkit-mask-image:linear-gradient(90deg, transparent, #000 8%, #000 92%, transparent); mask-image:linear-gradient(90deg, transparent, #000 8%, #000 92%, transparent); }
   .galeria-fila { display:flex; gap:16px; width:max-content; animation: desfile 40s linear infinite; }
   .galeria-fila img { width:56px; height:56px; border-radius:50%; border:2px solid #2a2f3a; opacity:0.65; transition: opacity .2s, border-color .2s, transform .2s; }
   .galeria-fila img:hover { opacity:1; border-color:#f5c518; transform: scale(1.12); }
-  footer { text-align:center; color:#9ca3af; margin-top:44px; font-size:0.85em; position:relative; z-index:1; }
+  footer { text-align:center; color:#9a9aa2; margin-top:44px; font-size:0.85em; position:relative; z-index:1; }
   footer .divisor { max-width:400px; margin-left:auto; margin-right:auto; }
   .creditos {
-    max-width:640px; margin:0 auto; padding:26px 24px; border-radius:14px; border:1px solid #2a2f3a;
-    position:relative; overflow:hidden; background:#0e1117;
+    max-width:640px; margin:0 auto; padding:26px 24px; border-radius:14px; border:1px solid var(--line);
+    position:relative; overflow:hidden; background:var(--panel);
   }
   .creditos.con-banner { background-size:cover; background-position:center; }
-  .creditos.con-banner::before { content:""; position:absolute; inset:0; background:linear-gradient(180deg, rgba(5,6,10,0.55), rgba(5,6,10,0.93)); }
+  .creditos.con-banner::before { content:""; position:absolute; inset:0; background:linear-gradient(180deg, rgba(10,10,12,0.55), rgba(10,10,12,0.93)); }
   .creditos > * { position:relative; z-index:1; }
   .creditos-servidor { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:12px; margin-bottom:14px; text-align:center; }
-  .creditos-servidor img { width:104px; height:104px; border-radius:50%; border:3px solid #f5c518; box-shadow:0 0 26px rgba(245,197,24,0.4); }
-  .creditos-servidor .nombre { color:#f5c518; font-weight:700; font-size:1.2em; font-family:'Cinzel',serif; }
+  .creditos-servidor img { width:104px; height:104px; border-radius:50%; border:3px solid var(--acc); box-shadow:0 0 26px rgba(215,255,58,0.35); }
+  .creditos-servidor .nombre { color:var(--acc); font-weight:400; font-size:1.2em; font-family:'Anton',sans-serif; }
   .btn-discord {
     display:inline-flex; align-items:center; gap:8px; margin-top:10px; padding:10px 22px;
     background:#5865F2; color:#fff; text-decoration:none; border-radius:22px; font-weight:700;
-    font-family:'Rajdhani',sans-serif; letter-spacing:0.5px; transition: transform .2s, box-shadow .2s;
+    font-family:'Inter',sans-serif; letter-spacing:0.3px; transition: transform .2s, box-shadow .2s;
   }
   .btn-discord:hover { transform: translateY(-2px); box-shadow:0 6px 18px rgba(88,101,242,0.45); }
   .creditos-riot { margin-top:16px; font-size:0.78em; color:#6b7280; }
@@ -2310,10 +2362,11 @@ PAGINA_HTML = """
     .stat-card .num { font-size:1.3em; }
     table { font-size:0.82em; min-width:640px; }
     th, td { padding:8px 8px; }
-    .podio-card { width:120px; padding:14px 10px; }
-    .podio-card.p1 { width:136px; }
+    .podio-card { width:100%; padding:16px; }
     .hex-corner { width:34px; height:34px; }
     .galeria-fila img { width:44px; height:44px; }
+    .navbar-links { display:none; }
+    .navbar-countdown { display:none; }
   }
 </style>
 </head>
@@ -2324,11 +2377,18 @@ PAGINA_HTML = """
       <svg class="icon" viewBox="0 0 24 24"><path d="M12 2l7 3v6c0 5-3.5 8.5-7 10-3.5-1.5-7-5-7-10V5l7-3z"/></svg>
       SoloQ Challenge
     </div>
+    <span class="navbar-chip">SQC 2026</span>
     <div class="navbar-links">
-      <a href="#inicio">Inicio</a>
+      <a href="#tabla" class="activo"><svg class="icon" viewBox="0 0 24 24"><path d="M8 4h8v4a4 4 0 0 1-8 0V4z"/><path d="M8 5H4v2a4 4 0 0 0 4 4M16 5h4v2a4 4 0 0 1-4 4"/></svg>Ranking</a>
       <a href="#escudos"><svg class="icon" viewBox="0 0 24 24"><path d="M12 2c1 3-2 4-2 7a4 4 0 1 0 8 0c0-2-1-3-1-5 2 1 3 4 3 7a6 6 0 1 1-12 0c0-4 2-6 4-9z"/></svg>Escudos Azules</a>
-      <a href="#tabla"><svg class="icon" viewBox="0 0 24 24"><path d="M8 4h8v4a4 4 0 0 1-8 0V4z"/><path d="M8 5H4v2a4 4 0 0 0 4 4M16 5h4v2a4 4 0 0 1-4 4"/><path d="M12 12v4M9 20h6M10 16h4v4h-4v-4z"/></svg>Clasificación</a>
-      <a href="{{ discord_invite }}" target="_blank" rel="noopener"><svg class="icon" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M20.317 4.369a19.79 19.79 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.058a.082.082 0 0 0 .031.056 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028 14.09 14.09 0 0 0 1.226-1.994.076.076 0 0 0-.041-.106 13.107 13.107 0 0 1-1.872-.892.077.077 0 0 1-.008-.128c.126-.094.252-.192.372-.291a.074.074 0 0 1 .077-.01c3.927 1.793 8.18 1.793 12.061 0a.073.073 0 0 1 .078.01c.12.099.246.198.373.292a.077.077 0 0 1-.006.127c-.598.35-1.22.645-1.873.893a.076.076 0 0 0-.04.106c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.029 19.84 19.84 0 0 0 6.002-3.03.077.077 0 0 0 .032-.055c.5-5.177-.838-9.674-3.548-13.662a.06.06 0 0 0-.031-.028zM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.955 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.946 2.418-2.157 2.418z"/></svg>Discord</a>
+      <a href="#inicio"><svg class="icon" viewBox="0 0 24 24"><path d="M3 11l9-7 9 7"/><path d="M5 10v10h14V10"/></svg>Inicio</a>
+    </div>
+    <div class="navbar-right">
+      {% if fin_torneo_iso %}<div class="navbar-countdown disp"><span id="countdown-nav"></span></div>{% endif %}
+      <a href="{{ discord_invite }}" target="_blank" rel="noopener" class="navbar-chip" style="background:#5865F2; border-color:#5865F2; color:#fff;">
+        <svg class="icon" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M20.317 4.369a19.79 19.79 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.058a.082.082 0 0 0 .031.056 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028 14.09 14.09 0 0 0 1.226-1.994.076.076 0 0 0-.041-.106 13.107 13.107 0 0 1-1.872-.892.077.077 0 0 1-.008-.128c.126-.094.252-.192.372-.291a.074.074 0 0 1 .077-.01c3.927 1.793 8.18 1.793 12.061 0a.073.073 0 0 1 .078.01c.12.099.246.198.373.292a.077.077 0 0 1-.006.127c-.598.35-1.22.645-1.873.893a.076.076 0 0 0-.04.106c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.029 19.84 19.84 0 0 0 6.002-3.03.077.077 0 0 0 .032-.055c.5-5.177-.838-9.674-3.548-13.662a.06.06 0 0 0-.031-.028zM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.955 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.946 2.418-2.157 2.418z"/></svg>
+        Discord
+      </a>
     </div>
   </div>
 </nav>
@@ -2379,18 +2439,35 @@ PAGINA_HTML = """
 
 {% macro podio(lista) %}
 {% if lista %}
+{% set max_total = (lista[:3]|map(attribute='total')|list|max) %}
 <div class="podio">
   {% for j in lista[:3] %}
+  {% set pct = 0 %}
+  {% if max_total and max_total > 0 %}{% set pct = (j.total / max_total * 100) %}{% endif %}
   <div class="podio-card p{{ loop.index }}">
-    {% if loop.index == 1 %}<div class="podio-corona"><svg class="icon" viewBox="0 0 24 24"><path d="M4 8l4 3 4-6 4 6 4-3-2 10H6L4 8z"/><path d="M6 20h12"/></svg></div>{% endif %}
-    <div class="medal-badge {{ 'p1' if loop.index==1 else ('p2' if loop.index==2 else 'p3') }}">{{ loop.index }}</div>
-    <div class="nombre">{{ j.nombre }}</div>
-    <div class="rango-fila">
-      {% set emb = emblema_rango(j.tier_actual) %}
-      {% if emb %}<img class="emblema-rango" src="{{ emb }}" alt="{{ j.tier_actual }}">{% endif %}
-      <span class="tier-badge" style="border-color:{{ tier_colors.get(j.tier_actual,'#6b7280') }}; color:{{ tier_colors.get(j.tier_actual,'#6b7280') }};">{{ j.tier_actual }} {{ j.rank_actual }}</span>
+    <div class="podio-cabecera">
+      <div class="medal-badge {{ 'p1' if loop.index==1 else ('p2' if loop.index==2 else 'p3') }}">
+        {% if loop.index == 1 %}<svg class="icon" viewBox="0 0 24 24"><path d="M4 8l4 3 4-6 4 6 4-3-2 10H6L4 8z"/><path d="M6 20h12"/></svg>{% else %}{{ loop.index }}{% endif %}
+      </div>
+      <a href="{{ j.opgg_url }}" target="_blank" rel="noopener" class="btn-opgg">OP.GG</a>
     </div>
-    <div class="pts">{{ j.total }} pts</div>
+    <div class="podio-jugador">
+      <img class="avatar big" src="{{ j.avatar }}" alt="">
+      <div>
+        <div class="nombre">{{ j.nombre.split('#')[0] }}</div>
+        <div class="subnombre">{{ j.nombre }}</div>
+      </div>
+    </div>
+    <div class="lp-fila pts">
+      <svg class="icon flame" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M12 2c1 3-2 4-2 7a4 4 0 1 0 8 0c0-2-1-3-1-5 2 1 3 4 3 7a6 6 0 1 1-12 0c0-4 2-6 4-9z"/></svg>
+      <span class="lp-num">{{ j.total }}</span><span style="font-size:0.5em; color:#8a8a92; font-weight:700;">LP</span>
+    </div>
+    <div class="podio-stats">
+      <div class="pstat"><div class="v">{{ j.wins }}W {{ j.losses }}L</div><div class="l">{{ j.partidas }} partidas</div></div>
+      <div class="pstat"><div class="v">{{ j.winrate }}%</div><div class="l">Winrate</div></div>
+      <div class="pstat"><div class="v"><span class="racha-badge">{{ j.racha }}<svg class="icon" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M12 2c1 3-2 4-2 7a4 4 0 1 0 8 0c0-2-1-3-1-5 2 1 3 4 3 7a6 6 0 1 1-12 0c0-4 2-6 4-9z"/></svg></span></div><div class="l">Racha</div></div>
+    </div>
+    <div class="barra" style="width:100%; margin-top:14px;"><div class="barra-fill" style="width:{{ pct|round(1) }}%; background:var(--acc);"></div></div>
   </div>
   {% endfor %}
 </div>
@@ -2399,32 +2476,44 @@ PAGINA_HTML = """
 
 {% macro tabla_jugadores(lista) %}
 {% if lista %}
-{% set max_total = (lista|map(attribute='total')|list|max) %}
 <div class="tabla-wrap">
-<table>
-  <tr><th>#</th><th>Jugador</th><th>Rango</th><th>Progreso</th><th>Escalado</th><th>Bonus</th><th>Castigos</th><th>Voz</th><th>Escudos / Aegis</th><th>Total</th></tr>
+<table class="tabla-jugadores">
+  <tr><th>#</th><th>Jugador</th><th>Rango</th><th>Elo (LP)</th><th>Net Wins</th><th>Racha</th><th>±LP</th><th>Voz</th><th>Escudos / Aegis</th><th>Total</th><th>Stats</th></tr>
   {% for j in lista %}
-  {% set pct = 0 %}
-  {% if max_total and max_total > 0 %}{% set pct = (j.total / max_total * 100) %}{% endif %}
-  {% if pct < 0 %}{% set pct = 0 %}{% endif %}
-  {% if pct > 100 %}{% set pct = 100 %}{% endif %}
   {% set emb = emblema_rango(j.tier_actual) %}
-  <tr>
+  <tr data-nombre="{{ j.nombre|lower }}">
     <td class="{{ 'pos1' if loop.index==1 else ('pos2' if loop.index==2 else ('pos3' if loop.index==3 else '')) }}">{{ loop.index }}</td>
-    <td>{{ j.nombre }}</td>
+    <td>
+      <div class="jugador-fila">
+        <img class="avatar" src="{{ j.avatar }}" alt="">
+        <div class="nombres">
+          <div class="principal">{{ j.nombre.split('#')[0] }}</div>
+          <div class="tag">#{{ j.nombre.split('#')[1] if '#' in j.nombre else '' }}</div>
+        </div>
+      </div>
+    </td>
     <td>
       <div class="rango-fila" style="justify-content:flex-start;">
         {% if emb %}<img class="emblema-rango chico" src="{{ emb }}" alt="{{ j.tier_actual }}">{% endif %}
         <span class="tier-badge" style="border-color:{{ tier_colors.get(j.tier_actual,'#6b7280') }}; color:{{ tier_colors.get(j.tier_actual,'#6b7280') }};">{{ j.tier_actual }} {{ j.rank_actual }}</span>
       </div>
     </td>
-    <td><div class="barra"><div class="barra-fill" style="width:{{ pct|round(1) }}%; background:{{ tier_colors.get(j.tier_actual,'#f5c518') }};"></div></div></td>
-    <td>{{ j.escalado }}</td>
-    <td>+{{ j.bonus }}</td>
-    <td>-{{ j.castigos }}</td>
+    <td>
+      <div class="lp-fila">
+        <svg class="icon flame" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M12 2c1 3-2 4-2 7a4 4 0 1 0 8 0c0-2-1-3-1-5 2 1 3 4 3 7a6 6 0 1 1-12 0c0-4 2-6 4-9z"/></svg>
+        <b>{{ j.lp_actual }}</b>
+      </div>
+    </td>
+    <td style="min-width:120px;">
+      <div class="wr-bar"><div class="win" style="width:{{ j.winrate }}%;"></div></div>
+      <div style="font-size:0.75em; color:#8a8a92; margin-top:3px;">{{ j.winrate }}% - {{ j.wins }}W {{ j.losses }}L</div>
+    </td>
+    <td><span class="racha-badge">{{ j.racha }}<svg class="icon" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M12 2c1 3-2 4-2 7a4 4 0 1 0 8 0c0-2-1-3-1-5 2 1 3 4 3 7a6 6 0 1 1-12 0c0-4 2-6 4-9z"/></svg></span></td>
+    <td class="{{ 'delta-up' if j.lp_ganados >= 0 else 'delta-down' }}">{{ '+' if j.lp_ganados >= 0 else '' }}{{ j.lp_ganados }}</td>
     <td class="voz-ok">{{ j.tiempo_voz_min }} min</td>
     <td><span class="badge-shell">{{ j.escudos }} escudo(s)</span>{% if j.aegis_activo %}<span class="badge-aegis">Aegis {{ j.aegis_restante }}h</span>{% endif %}</td>
     <td><b>{{ j.total }}</b></td>
+    <td>{% if j.opgg_url %}<a href="{{ j.opgg_url }}" target="_blank" rel="noopener" class="btn-opgg">OP.GG</a>{% endif %}</td>
   </tr>
   {% endfor %}
 </table>
@@ -2437,9 +2526,20 @@ PAGINA_HTML = """
 <div class="contenedor">
   <div class="aviso"><span class="icon-circle"><svg class="icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 11h1v6h1"/></svg></span><span>Para que tus puntos sean validos debes conectarte al chat de voz del servidor de Discord (cualquier canal) mientras juegas tus partidas. El ranking se basa en escalar de division/liga (Blue Shell / Escudos Azules / Aegis activos).</span></div>
 
-  <div id="tabla" class="tabs">
-    <button class="tab-btn activo" onclick="mostrarTab('high', this)"><svg class="icon" viewBox="0 0 24 24"><path d="M8 4h8v4a4 4 0 0 1-8 0V4z"/><path d="M8 5H4v2a4 4 0 0 0 4 4M16 5h4v2a4 4 0 0 1-4 4"/><path d="M12 12v4M9 20h6M10 16h4v4h-4v-4z"/></svg>High Elo</button>
-    <button class="tab-btn" onclick="mostrarTab('low', this)"><svg class="icon" viewBox="0 0 24 24"><path d="M4 4l16 16M20 4L4 20"/></svg>Low Elo</button>
+  <div id="tabla" class="filtros-fila">
+    <div class="filtros-izq">
+      <div class="tabs">
+        <button class="tab-btn activo" onclick="mostrarTab('high', this)"><svg class="icon" viewBox="0 0 24 24"><path d="M8 4h8v4a4 4 0 0 1-8 0V4z"/><path d="M8 5H4v2a4 4 0 0 0 4 4M16 5h4v2a4 4 0 0 1-4 4"/><path d="M12 12v4M9 20h6M10 16h4v4h-4v-4z"/></svg>High Elo</button>
+        <button class="tab-btn" onclick="mostrarTab('low', this)"><svg class="icon" viewBox="0 0 24 24"><path d="M4 4l16 16M20 4L4 20"/></svg>Low Elo</button>
+      </div>
+      <div class="buscador">
+        <svg class="icon" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+        <input type="text" id="buscarJugador" placeholder="Buscar jugador" oninput="filtrarJugadores(this.value)">
+      </div>
+      {% if total_castigos_pendientes %}
+      <div class="badge-castigos"><svg class="icon" viewBox="0 0 24 24"><path d="M12 2c1 3-2 4-2 7a4 4 0 1 0 8 0c0-2-1-3-1-5 2 1 3 4 3 7a6 6 0 1 1-12 0c0-4 2-6 4-9z"/></svg>Castigos <b>{{ total_castigos_pendientes }}</b></div>
+      {% endif %}
+    </div>
   </div>
   <div id="tab-high" class="tab-panel activo">
     <div class="categoria">
@@ -2527,20 +2627,31 @@ function mostrarTab(id, btn) {
   document.querySelectorAll('.tab-btn').forEach(function(b) { b.classList.remove('activo'); });
   btn.classList.add('activo');
 }
+function filtrarJugadores(valor) {
+  const q = valor.trim().toLowerCase();
+  document.querySelectorAll('table.tabla-jugadores tr[data-nombre]').forEach(function(tr) {
+    tr.style.display = tr.getAttribute('data-nombre').indexOf(q) !== -1 ? '' : 'none';
+  });
+}
 const finTorneo = {{ fin_torneo_iso|tojson if fin_torneo_iso else 'null' }};
 function actualizarCountdown() {
-  const el = document.getElementById('countdown');
-  if (!el) return;
-  if (!finTorneo) { el.textContent = ''; return; }
+  if (!finTorneo) { return; }
   const ahora = new Date();
   const fin = new Date(finTorneo);
   let diff = fin - ahora;
-  if (diff <= 0) { el.textContent = 'Torneo finalizado'; return; }
-  const d = Math.floor(diff / 86400000); diff -= d * 86400000;
-  const h = Math.floor(diff / 3600000); diff -= h * 3600000;
-  const m = Math.floor(diff / 60000); diff -= m * 60000;
-  const s = Math.floor(diff / 1000);
-  el.textContent = d + 'd ' + h + 'h ' + m + 'm ' + s + 's para el cierre';
+  let texto;
+  if (diff <= 0) { texto = 'Torneo finalizado'; }
+  else {
+    const d = Math.floor(diff / 86400000); diff -= d * 86400000;
+    const h = Math.floor(diff / 3600000); diff -= h * 3600000;
+    const m = Math.floor(diff / 60000); diff -= m * 60000;
+    const s = Math.floor(diff / 1000);
+    texto = d + 'd ' + h + 'h ' + m + 'm ' + s + 's para el cierre';
+  }
+  const el = document.getElementById('countdown');
+  if (el) el.textContent = texto;
+  const elNav = document.getElementById('countdown-nav');
+  if (elNav) elNav.textContent = texto;
 }
 actualizarCountdown();
 setInterval(actualizarCountdown, 1000);
@@ -2572,7 +2683,9 @@ def home():
         {'nombre': c, 'icono': icono_campeon(c)}
         for c in random.sample(CAMPEONES_POOL, min(20, len(CAMPEONES_POOL)))
     ]
+    total_castigos_pendientes = sum(j.get('castigos_pendientes', 0) for j in high + low)
     return render_template_string(PAGINA_HTML, high=high, low=low, pendientes=pendientes, sin_voz=sin_voz,
+                                   total_castigos_pendientes=total_castigos_pendientes,
                                    duracion=DURACION_TORNEO, estado_torneo=calcular_estado_torneo(db),
                                    premio=PREMIO_GANADOR_USD,
                                    fondo_url=splash_campeon(campeon_destacado),
