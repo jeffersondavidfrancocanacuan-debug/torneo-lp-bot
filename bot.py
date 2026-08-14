@@ -2112,9 +2112,29 @@ PAGINA_HTML = """
 {% if icono_destacado %}<link rel="icon" href="{{ icono_destacado }}">{% endif %}
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;800&family=Rajdhani:wght@500;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;800&family=Barlow+Condensed:wght@500;600;700;800&family=Rajdhani:wght@500;600;700&display=swap" rel="stylesheet">
 <style>
   * { box-sizing: border-box; }
+  .icon { width:1em; height:1em; display:inline-block; vertical-align:-0.15em; stroke:currentColor; fill:none; stroke-width:1.7; stroke-linecap:round; stroke-linejoin:round; }
+  .uc { font-family:'Barlow Condensed',sans-serif; text-transform:uppercase; letter-spacing:1.5px; }
+  #inicio, #escudos, #tabla { scroll-margin-top:66px; }
+  .navbar { position:sticky; top:0; z-index:30; background:#0a0d12ee; backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px); border-bottom:1px solid #20242e; }
+  .navbar-inner { max-width:1150px; margin:0 auto; padding:0 20px; display:flex; align-items:center; justify-content:space-between; height:56px; gap:14px; overflow-x:auto; }
+  .navbar-marca { display:flex; align-items:center; gap:8px; color:#f5c518; font-family:'Cinzel',serif; font-weight:800; font-size:1.05em; letter-spacing:1px; white-space:nowrap; }
+  .navbar-marca .icon { width:22px; height:22px; }
+  .navbar-links { display:flex; gap:26px; white-space:nowrap; }
+  .navbar-links a { display:inline-flex; align-items:center; gap:6px; color:#9ca3af; text-decoration:none; font-family:'Barlow Condensed',sans-serif; font-weight:600; text-transform:uppercase; letter-spacing:1.5px; font-size:0.92em; padding:4px 2px; border-bottom:2px solid transparent; transition: color .2s, border-color .2s; }
+  .navbar-links a:hover { color:#f5c518; border-color:#f5c518; }
+  .navbar-links a .icon { width:15px; height:15px; }
+  .eyebrow { text-transform:uppercase; letter-spacing:3px; color:#f5c518; font-family:'Barlow Condensed',sans-serif; font-weight:700; font-size:0.85em; opacity:.9; }
+  .btn-outline { display:inline-flex; align-items:center; gap:8px; margin-top:22px; padding:12px 30px; background:transparent; border:1px solid #f5c518; color:#f5c518; text-decoration:none; font-family:'Barlow Condensed',sans-serif; font-weight:700; text-transform:uppercase; letter-spacing:2px; font-size:0.95em; transition: background .2s, color .2s; cursor:pointer; }
+  .btn-outline:hover { background:#f5c518; color:#0a0d12; }
+  .medal-badge { width:34px; height:34px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-family:'Cinzel',serif; font-weight:800; font-size:1.05em; margin:6px auto 0; border:2px solid currentColor; background:#0e1117; }
+  .medal-badge.p1 { color:#f5c518; box-shadow:0 0 14px rgba(245,197,24,.5); }
+  .medal-badge.p2 { color:#c0c0c0; }
+  .medal-badge.p3 { color:#cd7f32; }
+  .icon-circle { color:#f5c518; display:inline-flex; flex-shrink:0; margin-top:2px; }
+  .icon-circle .icon { width:18px; height:18px; }
   @keyframes brillo {
     0%, 100% { text-shadow: 0 0 18px rgba(245,197,24,0.55), 0 0 2px rgba(245,197,24,0.9); }
     50% { text-shadow: 0 0 34px rgba(245,197,24,0.95), 0 0 6px rgba(245,197,24,1); }
@@ -2172,13 +2192,14 @@ PAGINA_HTML = """
   .hex-corner.bl { bottom:12px; left:12px; transform:scaleY(-1); }
   .hex-corner.br { bottom:12px; right:12px; transform:scale(-1,-1); }
   .logo-fila { display:flex; align-items:center; justify-content:center; gap:16px; position:relative; z-index:1; }
-  .logo-escudo { font-size: 2.4em; display:inline-block; animation: flotar 3.5s ease-in-out infinite; filter: drop-shadow(0 0 8px rgba(155,89,182,0.8)); }
+  .logo-escudo { font-size: 2.4em; color:#c9a8e0; display:inline-block; animation: flotar 3.5s ease-in-out infinite; filter: drop-shadow(0 0 8px rgba(155,89,182,0.8)); }
+  .logo-escudo .icon { stroke-width:1.4; }
   header h1 { margin:0; font-size:3em; color:#f5c518; letter-spacing:2px; animation: brillo 2.6s ease-in-out infinite; }
   header p.subtitulo { color:#c8ccd4; margin-top:10px; position:relative; z-index:1; font-size:1.05em; letter-spacing:0.5px; }
   .estado-fila { display:flex; flex-wrap:wrap; gap:10px; justify-content:center; margin-top:18px; position:relative; z-index:1; }
   .estado { display:inline-block; padding:8px 18px; background:#1f2937cc; border:1px solid #f5c518; border-radius:20px; color:#f5c518; font-weight:600; font-size:0.9em; animation: pulso 2.4s infinite; }
   .premio { display:inline-block; padding:8px 18px; background:#132a1ccc; border:1px solid #3ba55d; border-radius:20px; color:#3ba55d; font-weight:600; font-size:0.9em; }
-  .countdown { display:inline-block; padding:8px 18px; background:#241a33cc; border:1px solid #9b59b6; border-radius:20px; color:#c9a8e0; font-weight:600; font-size:0.9em; }
+  .countdown { display:inline-flex; align-items:center; gap:6px; padding:8px 18px; background:#241a33cc; border:1px solid #9b59b6; border-radius:20px; color:#c9a8e0; font-weight:600; font-size:0.9em; }
   .stats { display:flex; justify-content:center; gap:16px; margin-top:26px; flex-wrap:wrap; position:relative; z-index:1; }
   .stat-card {
     background:#161b22cc; backdrop-filter: blur(2px); border-radius:10px; padding:14px 22px; min-width:120px;
@@ -2200,9 +2221,10 @@ PAGINA_HTML = """
   .aviso { background:#1f2937cc; border-left:4px solid #f5c518; padding:14px 18px; border-radius:6px; margin-top:24px; color:#d1d5db; display:flex; gap:10px; align-items:flex-start; }
   .tabs { display:flex; justify-content:center; gap:8px; margin:8px 0 0; }
   .tab-btn {
+    display:inline-flex; align-items:center; gap:8px;
     background:#161b22; border:1px solid #2a2f3a; border-bottom:none; color:#c8ccd4; padding:10px 26px;
-    border-radius:10px 10px 0 0; cursor:pointer; font-family:'Rajdhani',sans-serif; font-weight:700;
-    font-size:1.05em; letter-spacing:0.5px; transition: all .2s;
+    border-radius:10px 10px 0 0; cursor:pointer; font-family:'Barlow Condensed',sans-serif; font-weight:700;
+    text-transform:uppercase; font-size:1.05em; letter-spacing:1.5px; transition: all .2s;
   }
   .tab-btn:hover { color:#f5c518; border-color:#f5c518; }
   .tab-btn.activo { background:#161b22; color:#f5c518; border-color:#f5c518; }
@@ -2223,8 +2245,7 @@ PAGINA_HTML = """
   .podio-card.p1 { order:2; padding-top:32px; width:172px; border-color:#f5c518; box-shadow:0 0 26px rgba(245,197,24,0.32); }
   .podio-card.p2 { order:1; border-color:#c0c0c0; }
   .podio-card.p3 { order:3; border-color:#cd7f32; }
-  .podio-corona { position:absolute; top:-22px; left:50%; transform:translateX(-50%); font-size:1.6em; animation: flotar 3s ease-in-out infinite; }
-  .podio-medalla { font-size:2em; }
+  .podio-corona { position:absolute; top:-22px; left:50%; transform:translateX(-50%); font-size:1.6em; color:#f5c518; animation: flotar 3s ease-in-out infinite; }
   .podio-card .nombre { font-family:'Rajdhani',sans-serif; font-weight:700; margin-top:6px; font-size:1.05em; }
   .podio-card .pts { color:#f5c518; font-size:1.3em; font-weight:800; margin-top:6px; font-family:'Cinzel',serif; }
   .rango-fila { display:flex; align-items:center; justify-content:center; gap:6px; margin-top:8px; }
@@ -2251,9 +2272,11 @@ PAGINA_HTML = """
   .barra { width:90px; height:8px; border-radius:6px; background:#20242e; overflow:hidden; }
   .barra-fill { height:100%; border-radius:6px; transition: width .6s ease; background-size: 40px 100%; background-image: linear-gradient(90deg, rgba(255,255,255,0.15) 25%, transparent 25%, transparent 50%, rgba(255,255,255,0.15) 50%, rgba(255,255,255,0.15) 75%, transparent 75%, transparent); animation: barrido 2s linear infinite; }
   .info-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:12px; }
-  .info-card { background:#12151c; border:1px solid #20242e; border-radius:10px; padding:16px; text-align:center; transition:transform .2s, border-color .2s; }
+  .info-card { background:#12151c; border:1px solid #20242e; border-radius:10px; padding:20px 16px; text-align:center; transition:transform .2s, border-color .2s; }
   .info-card:hover { transform: translateY(-3px); border-color:#9b59b6; }
-  .info-icono { font-size:1.8em; margin-bottom:6px; }
+  .info-icono { width:44px; height:44px; margin:0 auto 12px; border-radius:50%; border:1.5px solid #f5c518; display:flex; align-items:center; justify-content:center; color:#f5c518; background:#1a1f29; }
+  .info-icono .icon { width:22px; height:22px; }
+  .titulo-card { font-family:'Barlow Condensed',sans-serif; text-transform:uppercase; letter-spacing:1px; font-weight:700; font-size:0.98em; color:#d1d5db; }
   .galeria-wrap { overflow:hidden; margin:6px 0 4px; -webkit-mask-image:linear-gradient(90deg, transparent, #000 8%, #000 92%, transparent); mask-image:linear-gradient(90deg, transparent, #000 8%, #000 92%, transparent); }
   .galeria-fila { display:flex; gap:16px; width:max-content; animation: desfile 40s linear infinite; }
   .galeria-fila img { width:56px; height:56px; border-radius:50%; border:2px solid #2a2f3a; opacity:0.65; transition: opacity .2s, border-color .2s, transform .2s; }
@@ -2267,9 +2290,9 @@ PAGINA_HTML = """
   .creditos.con-banner { background-size:cover; background-position:center; }
   .creditos.con-banner::before { content:""; position:absolute; inset:0; background:linear-gradient(180deg, rgba(5,6,10,0.55), rgba(5,6,10,0.93)); }
   .creditos > * { position:relative; z-index:1; }
-  .creditos-servidor { display:flex; align-items:center; justify-content:center; gap:12px; margin-bottom:14px; }
-  .creditos-servidor img { width:44px; height:44px; border-radius:50%; border:2px solid #f5c518; }
-  .creditos-servidor .nombre { color:#f5c518; font-weight:700; font-size:1.1em; font-family:'Cinzel',serif; }
+  .creditos-servidor { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:12px; margin-bottom:14px; text-align:center; }
+  .creditos-servidor img { width:104px; height:104px; border-radius:50%; border:3px solid #f5c518; box-shadow:0 0 26px rgba(245,197,24,0.4); }
+  .creditos-servidor .nombre { color:#f5c518; font-weight:700; font-size:1.2em; font-family:'Cinzel',serif; }
   .btn-discord {
     display:inline-flex; align-items:center; gap:8px; margin-top:10px; padding:10px 22px;
     background:#5865F2; color:#fff; text-decoration:none; border-radius:22px; font-weight:700;
@@ -2295,24 +2318,41 @@ PAGINA_HTML = """
 </style>
 </head>
 <body>
+<nav class="navbar">
+  <div class="navbar-inner">
+    <div class="navbar-marca">
+      <svg class="icon" viewBox="0 0 24 24"><path d="M12 2l7 3v6c0 5-3.5 8.5-7 10-3.5-1.5-7-5-7-10V5l7-3z"/></svg>
+      SoloQ Challenge
+    </div>
+    <div class="navbar-links">
+      <a href="#inicio">Inicio</a>
+      <a href="#escudos"><svg class="icon" viewBox="0 0 24 24"><path d="M12 2c1 3-2 4-2 7a4 4 0 1 0 8 0c0-2-1-3-1-5 2 1 3 4 3 7a6 6 0 1 1-12 0c0-4 2-6 4-9z"/></svg>Escudos Azules</a>
+      <a href="#tabla"><svg class="icon" viewBox="0 0 24 24"><path d="M8 4h8v4a4 4 0 0 1-8 0V4z"/><path d="M8 5H4v2a4 4 0 0 0 4 4M16 5h4v2a4 4 0 0 1-4 4"/><path d="M12 12v4M9 20h6M10 16h4v4h-4v-4z"/></svg>Clasificación</a>
+      <a href="{{ discord_invite }}" target="_blank" rel="noopener"><svg class="icon" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M20.317 4.369a19.79 19.79 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.058a.082.082 0 0 0 .031.056 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028 14.09 14.09 0 0 0 1.226-1.994.076.076 0 0 0-.041-.106 13.107 13.107 0 0 1-1.872-.892.077.077 0 0 1-.008-.128c.126-.094.252-.192.372-.291a.074.074 0 0 1 .077-.01c3.927 1.793 8.18 1.793 12.061 0a.073.073 0 0 1 .078.01c.12.099.246.198.373.292a.077.077 0 0 1-.006.127c-.598.35-1.22.645-1.873.893a.076.076 0 0 0-.04.106c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.029 19.84 19.84 0 0 0 6.002-3.03.077.077 0 0 0 .032-.055c.5-5.177-.838-9.674-3.548-13.662a.06.06 0 0 0-.031-.028zM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.955 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.946 2.418-2.157 2.418z"/></svg>Discord</a>
+    </div>
+  </div>
+</nav>
 <div class="particulas">
 {% for p in particulas %}
 <span style="left:{{ p.left }}%; width:{{ p.size }}px; height:{{ p.size }}px; animation-duration:{{ p.dur }}s; animation-delay:-{{ p.delay }}s;"></span>
 {% endfor %}
 </div>
-<header>
+<header id="inicio">
   <svg class="hex-corner tl" viewBox="0 0 100 100"><polygon points="50,3 96,26 96,74 50,97 4,74 4,26" fill="none" stroke="#f5c518" stroke-width="3"/><polygon points="50,22 78,36 78,64 50,78 22,64 22,36" fill="none" stroke="#9b59b6" stroke-width="1.5"/></svg>
   <svg class="hex-corner tr" viewBox="0 0 100 100"><polygon points="50,3 96,26 96,74 50,97 4,74 4,26" fill="none" stroke="#f5c518" stroke-width="3"/><polygon points="50,22 78,36 78,64 50,78 22,64 22,36" fill="none" stroke="#9b59b6" stroke-width="1.5"/></svg>
   <div class="logo-fila">
-    <span class="logo-escudo">🛡️</span>
-    <h1>SoloQ Challenge</h1>
-    <span class="logo-escudo" style="animation-delay: -1.8s;">💠</span>
+    <span class="logo-escudo"><svg class="icon" viewBox="0 0 24 24"><path d="M12 2l7 3v6c0 5-3.5 8.5-7 10-3.5-1.5-7-5-7-10V5l7-3z"/></svg></span>
+    <div>
+      <div class="eyebrow">Torneo Oficial</div>
+      <h1>SoloQ Challenge</h1>
+    </div>
+    <span class="logo-escudo" style="animation-delay: -1.8s;"><svg class="icon" viewBox="0 0 24 24"><path d="M6 3h12l4 6-10 12L2 9l4-6z"/><path d="M2 9h20M8 3l4 6 4-6M6 9l6 12 6-12"/></svg></span>
   </div>
   <p class="subtitulo">Torneo interno de escalado de division/liga - {{ duracion }} dias - LAN</p>
   <div class="estado-fila">
     <div class="estado">{{ estado_torneo }}</div>
     <div class="premio">Premio: ${{ premio }} USD + insignias</div>
-    {% if fin_torneo_iso %}<div class="countdown" id="countdown"></div>{% endif %}
+    {% if fin_torneo_iso %}<div class="countdown"><svg class="icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l4 2"/></svg><span id="countdown"></span></div>{% endif %}
   </div>
   <div class="stats">
     <div class="stat-card"><div class="num">{{ high|length + low|length }}</div><div class="label">Jugadores activos</div></div>
@@ -2322,6 +2362,10 @@ PAGINA_HTML = """
   {% if campeon_destacado %}
   <div class="destacado"><img src="{{ icono_destacado }}" alt=""> Maldicion Blue Shell del momento: podria tocarte <b style="color:#c9a8e0">{{ campeon_destacado }}</b></div>
   {% endif %}
+  <a href="#tabla" class="btn-outline">
+    <svg class="icon" viewBox="0 0 24 24"><path d="M8 4h8v4a4 4 0 0 1-8 0V4z"/><path d="M8 5H4v2a4 4 0 0 0 4 4M16 5h4v2a4 4 0 0 1-4 4"/><path d="M12 12v4M9 20h6M10 16h4v4h-4v-4z"/></svg>
+    Ver Clasificación
+  </a>
 </header>
 
 {% if campeones_galeria %}
@@ -2338,8 +2382,8 @@ PAGINA_HTML = """
 <div class="podio">
   {% for j in lista[:3] %}
   <div class="podio-card p{{ loop.index }}">
-    {% if loop.index == 1 %}<div class="podio-corona">👑</div>{% endif %}
-    <div class="podio-medalla">{{ '🥇' if loop.index==1 else ('🥈' if loop.index==2 else '🥉') }}</div>
+    {% if loop.index == 1 %}<div class="podio-corona"><svg class="icon" viewBox="0 0 24 24"><path d="M4 8l4 3 4-6 4 6 4-3-2 10H6L4 8z"/><path d="M6 20h12"/></svg></div>{% endif %}
+    <div class="medal-badge {{ 'p1' if loop.index==1 else ('p2' if loop.index==2 else 'p3') }}">{{ loop.index }}</div>
     <div class="nombre">{{ j.nombre }}</div>
     <div class="rango-fila">
       {% set emb = emblema_rango(j.tier_actual) %}
@@ -2391,11 +2435,11 @@ PAGINA_HTML = """
 {% endmacro %}
 
 <div class="contenedor">
-  <div class="aviso"><span>ℹ️</span><span>Para que tus puntos sean validos debes conectarte al chat de voz del servidor de Discord (cualquier canal) mientras juegas tus partidas. El ranking se basa en escalar de division/liga (Blue Shell / Escudos Azules / Aegis activos).</span></div>
+  <div class="aviso"><span class="icon-circle"><svg class="icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 11h1v6h1"/></svg></span><span>Para que tus puntos sean validos debes conectarte al chat de voz del servidor de Discord (cualquier canal) mientras juegas tus partidas. El ranking se basa en escalar de division/liga (Blue Shell / Escudos Azules / Aegis activos).</span></div>
 
-  <div class="tabs">
-    <button class="tab-btn activo" onclick="mostrarTab('high', this)">🏆 High Elo</button>
-    <button class="tab-btn" onclick="mostrarTab('low', this)">⚔️ Low Elo</button>
+  <div id="tabla" class="tabs">
+    <button class="tab-btn activo" onclick="mostrarTab('high', this)"><svg class="icon" viewBox="0 0 24 24"><path d="M8 4h8v4a4 4 0 0 1-8 0V4z"/><path d="M8 5H4v2a4 4 0 0 0 4 4M16 5h4v2a4 4 0 0 1-4 4"/><path d="M12 12v4M9 20h6M10 16h4v4h-4v-4z"/></svg>High Elo</button>
+    <button class="tab-btn" onclick="mostrarTab('low', this)"><svg class="icon" viewBox="0 0 24 24"><path d="M4 4l16 16M20 4L4 20"/></svg>Low Elo</button>
   </div>
   <div id="tab-high" class="tab-panel activo">
     <div class="categoria">
@@ -2443,17 +2487,17 @@ PAGINA_HTML = """
   {% endif %}
 
   <div class="divisor"><span>◆</span></div>
-  <div class="categoria con-arte" {% if fondo_secundario %}style="background-image:url('{{ fondo_secundario }}');"{% endif %}>
+  <div id="escudos" class="categoria con-arte" {% if fondo_secundario %}style="background-image:url('{{ fondo_secundario }}');"{% endif %}>
     <h2>Como conseguir un Escudo Azul</h2>
     <div class="info-grid">
-      <div class="info-card"><div class="info-icono">🔥</div><div>Pentakill / Cuadrakill</div></div>
-      <div class="info-card"><div class="info-icono">⚔️</div><div>22+ kills o 30+ asistencias</div></div>
-      <div class="info-card"><div class="info-icono">📈</div><div>KDA perfecto &gt; 20</div></div>
-      <div class="info-card"><div class="info-icono">⏱️</div><div>Victoria de 40+ minutos</div></div>
-      <div class="info-card"><div class="info-icono">🔁</div><div>Racha de 6 victorias</div></div>
-      <div class="info-card"><div class="info-icono">💰</div><div>Comeback de 7000+ de oro</div></div>
-      <div class="info-card"><div class="info-icono">🎯</div><div>5 victorias con el mismo campeon</div></div>
-      <div class="info-card"><div class="info-icono">🗡️</div><div>Vencer a alguien con Blue Shell (se la robas)</div></div>
+      <div class="info-card"><div class="info-icono"><svg class="icon" viewBox="0 0 24 24"><path d="M12 2c1 3-2 4-2 7a4 4 0 1 0 8 0c0-2-1-3-1-5 2 1 3 4 3 7a6 6 0 1 1-12 0c0-4 2-6 4-9z"/></svg></div><div class="titulo-card">Pentakill / Cuadrakill</div></div>
+      <div class="info-card"><div class="info-icono"><svg class="icon" viewBox="0 0 24 24"><path d="M4 4l16 16M20 4L4 20"/></svg></div><div class="titulo-card">22+ kills o 30+ asistencias</div></div>
+      <div class="info-card"><div class="info-icono"><svg class="icon" viewBox="0 0 24 24"><path d="M3 17l6-6 4 4 8-8M15 7h6v6"/></svg></div><div class="titulo-card">KDA perfecto &gt; 20</div></div>
+      <div class="info-card"><div class="info-icono"><svg class="icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l4 2"/></svg></div><div class="titulo-card">Victoria de 40+ minutos</div></div>
+      <div class="info-card"><div class="info-icono"><svg class="icon" viewBox="0 0 24 24"><path d="M4 4v5h5M20 20v-5h-5"/><path d="M4.5 15a8 8 0 0 0 14.5 3.5M19.5 9A8 8 0 0 0 5 5.5"/></svg></div><div class="titulo-card">Racha de 6 victorias</div></div>
+      <div class="info-card"><div class="info-icono"><svg class="icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9 9h3a2 2 0 1 1 0 4H9m0 0h3a2 2 0 1 1 0 4H9M12 6v2M12 16v2"/></svg></div><div class="titulo-card">Comeback de 7000+ de oro</div></div>
+      <div class="info-card"><div class="info-icono"><svg class="icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1"/></svg></div><div class="titulo-card">5 victorias con el mismo campeon</div></div>
+      <div class="info-card"><div class="info-icono"><svg class="icon" viewBox="0 0 24 24"><path d="M12 2l2 2-8 8-2-2 8-8z"/><path d="M6 12l2 2-4 4-2-2 4-4z"/><path d="M14 4l6 6"/></svg></div><div class="titulo-card">Vencer a alguien con Blue Shell (se la robas)</div></div>
     </div>
   </div>
 </div>
@@ -2496,7 +2540,7 @@ function actualizarCountdown() {
   const h = Math.floor(diff / 3600000); diff -= h * 3600000;
   const m = Math.floor(diff / 60000); diff -= m * 60000;
   const s = Math.floor(diff / 1000);
-  el.textContent = '⏳ ' + d + 'd ' + h + 'h ' + m + 'm ' + s + 's para el cierre';
+  el.textContent = d + 'd ' + h + 'h ' + m + 'm ' + s + 's para el cierre';
 }
 actualizarCountdown();
 setInterval(actualizarCountdown, 1000);
