@@ -759,6 +759,7 @@ TIER_ORDEN = ['IRON', 'BRONZE', 'SILVER', 'GOLD', 'PLATINUM', 'EMERALD',
               'DIAMOND', 'MASTER', 'GRANDMASTER', 'CHALLENGER']
 RANK_ORDEN = ['IV', 'III', 'II', 'I']  # de menor a mayor dentro de una division
 
+
 def tier_index(tier):
     try:
         return TIER_ORDEN.index(tier.upper())
@@ -1515,6 +1516,7 @@ async def maldecir(interaction: discord.Interaction, usuario: discord.Member):
     destino_puuid, destino_data = target_puuid, target_data
     if efecto['tipo'] == 'reverse':
         destino_puuid, destino_data = caster_puuid, caster_data
+
     if aegis_activo(destino_data):
         await interaction.followup.send(
             f'La maldicion iba a rebotar hacia **{destino_data["nombre"]}**, pero tiene un Aegis activo y la maldicion se disipa. Se consumio tu escudo igualmente.')
@@ -2069,13 +2071,27 @@ async def on_ready():
 
 app = Flask(__name__)
 
+TIER_COLORES_WEB = {
+    'IRON': '#5b504a', 'BRONZE': '#8c5a3c', 'SILVER': '#9fa8b3', 'GOLD': '#e0a83e',
+    'PLATINUM': '#3fc1b0', 'EMERALD': '#3fae6a', 'DIAMOND': '#5aa7f5', 'MASTER': '#b463e6',
+    'GRANDMASTER': '#e5484d', 'CHALLENGER': '#f5c518', 'UNRANKED': '#6b7280',
+}
+
 PAGINA_HTML = """
 <!DOCTYPE html>
 <html lang="es">
 <head>
 <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <meta http-equiv="refresh" content="60">
 <title>SoloQ Challenge</title>
+<meta property="og:title" content="SoloQ Challenge - Torneo LAN">
+<meta property="og:description" content="Torneo interno de escalado de rango en League of Legends. Blue Shells, Escudos Azules, Aegis y mucho mas.">
+{% if fondo_url %}<meta property="og:image" content="{{ fondo_url }}">{% endif %}
+{% if icono_destacado %}<link rel="icon" href="{{ icono_destacado }}">{% endif %}
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;800&family=Rajdhani:wght@500;600;700&display=swap" rel="stylesheet">
 <style>
   * { box-sizing: border-box; }
   @keyframes brillo {
@@ -2086,74 +2102,168 @@ PAGINA_HTML = """
     0%, 100% { transform: translateY(0px) rotate(-4deg); }
     50% { transform: translateY(-10px) rotate(4deg); }
   }
-  @keyframes girar {
-    from { transform: rotate(0deg); }
-    to { transform: rotate(360deg); }
-  }
+  @keyframes girar { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
   @keyframes pulso {
     0%, 100% { box-shadow: 0 0 0 0 rgba(245,197,24,0.5); }
-    50% { box-shadow: 0 0 0 8px rgba(245,197,24,0); }
+    50% { box-shadow: 0 0 0 10px rgba(245,197,24,0); }
   }
-  @keyframes aparecer {
-    from { opacity: 0; transform: translateY(8px); }
-    to { opacity: 1; transform: translateY(0); }
+  @keyframes aparecer { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+  @keyframes subir {
+    0% { transform: translateY(110vh) scale(1); opacity: 0; }
+    8% { opacity: 0.7; }
+    92% { opacity: 0.5; }
+    100% { transform: translateY(-10vh) scale(0.5); opacity: 0; }
   }
-  body { background:#0b0d12; color:#e8e8e8; font-family: 'Segoe UI', Arial, sans-serif; margin:0; padding:0 0 60px; }
+  @keyframes barrido { 0% { background-position: -200px 0; } 100% { background-position: 200px 0; } }
+  html { scroll-behavior: smooth; }
+  body {
+    background: #05060a; color:#e8e8e8; font-family:'Rajdhani','Segoe UI',Arial,sans-serif;
+    margin:0; padding:0 0 60px; position:relative; min-height:100vh;
+  }
+  body::after {
+    content:""; position:fixed; inset:0; pointer-events:none; z-index:0;
+    background: radial-gradient(circle at 10% 0%, rgba(155,89,182,0.10), transparent 40%),
+                radial-gradient(circle at 90% 100%, rgba(245,197,24,0.08), transparent 40%),
+                radial-gradient(ellipse at 50% 50%, transparent 55%, rgba(0,0,0,0.55) 100%);
+  }
+  .particulas { position:fixed; inset:0; overflow:hidden; z-index:0; pointer-events:none; }
+  .particulas span {
+    position:absolute; bottom:-10px; border-radius:50%; background:#f5c518;
+    box-shadow:0 0 6px 1px rgba(245,197,24,0.9); animation-name:subir; animation-iteration-count:infinite;
+    animation-timing-function:linear;
+  }
+  h1, h2, h3 { font-family:'Cinzel', 'Segoe UI', serif; }
   header {
-    position: relative; overflow: hidden; padding:60px 20px 34px; text-align:center;
-    border-bottom:3px solid #f5c518;
-    background: linear-gradient(rgba(9,11,16,0.80), rgba(9,11,16,0.93)), {% if fondo_url %}url('{{ fondo_url }}'){% endif %};
+    position: relative; overflow: hidden; padding:56px 20px 30px; text-align:center;
+    border-bottom:3px solid #f5c518; z-index:1;
+    background: linear-gradient(rgba(5,6,10,0.82), rgba(5,6,10,0.95)), {% if fondo_url %}url('{{ fondo_url }}'){% endif %};
     background-size: cover; background-position: center 20%;
   }
   header::before {
     content: ""; position: absolute; inset: 0;
-    background: radial-gradient(circle at 50% -10%, rgba(245,197,24,0.25), transparent 60%);
+    background: radial-gradient(circle at 50% -10%, rgba(245,197,24,0.28), transparent 60%);
     pointer-events: none;
   }
-  .logo-fila { display:flex; align-items:center; justify-content:center; gap:14px; position:relative; z-index:1; }
+  .hex-corner { position:absolute; width:52px; height:52px; opacity:0.55; z-index:1; }
+  .hex-corner.tl { top:12px; left:12px; }
+  .hex-corner.tr { top:12px; right:12px; transform:scaleX(-1); }
+  .hex-corner.bl { bottom:12px; left:12px; transform:scaleY(-1); }
+  .hex-corner.br { bottom:12px; right:12px; transform:scale(-1,-1); }
+  .logo-fila { display:flex; align-items:center; justify-content:center; gap:16px; position:relative; z-index:1; }
   .logo-escudo { font-size: 2.4em; display:inline-block; animation: flotar 3.5s ease-in-out infinite; filter: drop-shadow(0 0 8px rgba(155,89,182,0.8)); }
-  header h1 { margin:0; font-size:2.9em; color:#f5c518; letter-spacing:1px; animation: brillo 2.6s ease-in-out infinite; }
-  header p { color:#c8ccd4; margin-top:10px; position:relative; z-index:1; }
-  .estado { display:inline-block; margin-top:18px; padding:8px 18px; background:#1f2937; border:1px solid #f5c518; border-radius:20px; color:#f5c518; font-weight:bold; font-size:0.9em; animation: pulso 2.4s infinite; position:relative; z-index:1; }
-  .premio { display:inline-block; margin-top:10px; margin-left:10px; padding:8px 18px; background:#132a1c; border:1px solid #3ba55d; border-radius:20px; color:#3ba55d; font-weight:bold; font-size:0.9em; position:relative; z-index:1; }
+  header h1 { margin:0; font-size:3em; color:#f5c518; letter-spacing:2px; animation: brillo 2.6s ease-in-out infinite; }
+  header p.subtitulo { color:#c8ccd4; margin-top:10px; position:relative; z-index:1; font-size:1.05em; letter-spacing:0.5px; }
+  .estado-fila { display:flex; flex-wrap:wrap; gap:10px; justify-content:center; margin-top:18px; position:relative; z-index:1; }
+  .estado { display:inline-block; padding:8px 18px; background:#1f2937cc; border:1px solid #f5c518; border-radius:20px; color:#f5c518; font-weight:600; font-size:0.9em; animation: pulso 2.4s infinite; }
+  .premio { display:inline-block; padding:8px 18px; background:#132a1ccc; border:1px solid #3ba55d; border-radius:20px; color:#3ba55d; font-weight:600; font-size:0.9em; }
+  .countdown { display:inline-block; padding:8px 18px; background:#241a33cc; border:1px solid #9b59b6; border-radius:20px; color:#c9a8e0; font-weight:600; font-size:0.9em; }
   .stats { display:flex; justify-content:center; gap:16px; margin-top:26px; flex-wrap:wrap; position:relative; z-index:1; }
-  .stat-card { background:#161b22cc; backdrop-filter: blur(2px); border-radius:10px; padding:14px 22px; min-width:120px; text-align:center; border:1px solid #2a2f3a; transition: transform 0.2s ease, border-color 0.2s ease; }
-  .stat-card:hover { transform: translateY(-3px); border-color:#f5c518; }
-  .stat-card .num { font-size:1.6em; color:#f5c518; font-weight:bold; }
-  .stat-card .label { font-size:0.75em; color:#9ca3af; text-transform:uppercase; letter-spacing:1px; }
-  .contenedor { max-width:1100px; margin:30px auto; padding:0 20px; }
-  .categoria { margin-bottom:40px; animation: aparecer 0.5s ease-out; }
-  .categoria h2 { border-left:5px solid #f5c518; padding-left:12px; font-size:1.4em; }
-  table { width:100%; border-collapse:collapse; background:#161b22; border-radius:8px; overflow:hidden; }
-  th, td { padding:12px 14px; text-align:left; border-bottom:1px solid #2a2f3a; }
-  th { background:#1f2530; color:#f5c518; text-transform:uppercase; font-size:0.8em; letter-spacing:1px; }
+  .stat-card {
+    background:#161b22cc; backdrop-filter: blur(2px); border-radius:10px; padding:14px 22px; min-width:120px;
+    text-align:center; border:1px solid #2a2f3a; transition: transform 0.2s ease, border-color 0.2s ease;
+    animation: aparecer .5s ease-out both;
+  }
+  .stat-card:nth-child(1) { animation-delay: .05s; }
+  .stat-card:nth-child(2) { animation-delay: .15s; }
+  .stat-card:nth-child(3) { animation-delay: .25s; }
+  .stat-card:hover { transform: translateY(-4px); border-color:#f5c518; }
+  .stat-card .num { font-size:1.7em; color:#f5c518; font-weight:800; font-family:'Cinzel',serif; }
+  .stat-card .label { font-size:0.72em; color:#9ca3af; text-transform:uppercase; letter-spacing:1px; }
+  .destacado { display:flex; align-items:center; justify-content:center; gap:10px; margin-top:20px; position:relative; z-index:1; color:#9ca3af; font-size:0.85em; }
+  .destacado img { width:34px; height:34px; border-radius:50%; border:2px solid #9b59b6; animation: girar 6s linear infinite; }
+  .contenedor { max-width:1150px; margin:0 auto; padding:0 20px; position:relative; z-index:1; }
+  .divisor { display:flex; align-items:center; gap:12px; margin:38px 0 20px; }
+  .divisor::before, .divisor::after { content:""; flex:1; height:1px; background:linear-gradient(90deg, transparent, #f5c51899, transparent); }
+  .divisor span { color:#f5c518; font-size:1.1em; }
+  .aviso { background:#1f2937cc; border-left:4px solid #f5c518; padding:14px 18px; border-radius:6px; margin-top:24px; color:#d1d5db; display:flex; gap:10px; align-items:flex-start; }
+  .tabs { display:flex; justify-content:center; gap:8px; margin:8px 0 0; }
+  .tab-btn {
+    background:#161b22; border:1px solid #2a2f3a; border-bottom:none; color:#c8ccd4; padding:10px 26px;
+    border-radius:10px 10px 0 0; cursor:pointer; font-family:'Rajdhani',sans-serif; font-weight:700;
+    font-size:1.05em; letter-spacing:0.5px; transition: all .2s;
+  }
+  .tab-btn:hover { color:#f5c518; border-color:#f5c518; }
+  .tab-btn.activo { background:#161b22; color:#f5c518; border-color:#f5c518; }
+  .tab-panel { display:none; }
+  .tab-panel.activo { display:block; animation: aparecer .4s ease-out; }
+  .categoria { margin-bottom:10px; background:#0e1117; border:1px solid #20242e; border-top:3px solid #f5c518; border-radius:0 10px 10px 10px; padding:22px 22px 26px; }
+  .categoria h2 { border-left:5px solid #f5c518; padding-left:12px; font-size:1.3em; margin-top:0; letter-spacing:1px; }
+  .categoria h2 .sub { color:#7a8291; font-size:0.6em; font-family:'Rajdhani',sans-serif; margin-left:8px; letter-spacing:0; }
+  .podio { display:flex; justify-content:center; align-items:flex-end; gap:14px; margin:8px 0 30px; flex-wrap:wrap; }
+  .podio-card {
+    background:linear-gradient(160deg,#171c26,#0e1117); border:1px solid #2a2f3a; border-radius:12px;
+    padding:18px 16px 16px; text-align:center; width:150px; position:relative; transition:transform .25s;
+  }
+  .podio-card:hover { transform: translateY(-6px); }
+  .podio-card.p1 { order:2; padding-top:32px; width:172px; border-color:#f5c518; box-shadow:0 0 26px rgba(245,197,24,0.32); }
+  .podio-card.p2 { order:1; border-color:#c0c0c0; }
+  .podio-card.p3 { order:3; border-color:#cd7f32; }
+  .podio-corona { position:absolute; top:-22px; left:50%; transform:translateX(-50%); font-size:1.6em; animation: flotar 3s ease-in-out infinite; }
+  .podio-medalla { font-size:2em; }
+  .podio-card .nombre { font-family:'Rajdhani',sans-serif; font-weight:700; margin-top:6px; font-size:1.05em; }
+  .podio-card .pts { color:#f5c518; font-size:1.3em; font-weight:800; margin-top:6px; font-family:'Cinzel',serif; }
+  .tier-badge {
+    display:inline-block; margin-top:8px; padding:2px 10px; border:1px solid #6b7280; border-radius:12px;
+    font-size:0.72em; font-weight:700; letter-spacing:0.5px; white-space:nowrap;
+  }
+  .tabla-wrap { overflow-x:auto; }
+  table { width:100%; border-collapse:collapse; background:#12151c; border-radius:8px; overflow:hidden; min-width:760px; }
+  th, td { padding:12px 14px; text-align:left; border-bottom:1px solid #20242e; }
+  th { background:#1a1f29; color:#f5c518; text-transform:uppercase; font-size:0.75em; letter-spacing:1px; }
   tr { transition: background 0.15s ease; }
-  tr:hover { background:#1c2230; }
-  .pos1 { color:#f5c518; font-weight:bold; }
-  .pos2 { color:#c0c0c0; font-weight:bold; }
-  .pos3 { color:#cd7f32; font-weight:bold; }
+  tr:hover { background:#1a202c; }
+  .pos1 { color:#f5c518; font-weight:800; }
+  .pos2 { color:#c0c0c0; font-weight:800; }
+  .pos3 { color:#cd7f32; font-weight:800; }
   .voz-ok { color:#3ba55d; }
   .voz-no { color:#ed4245; }
-  .vacio { color:#6b7280; padding:20px; text-align:center; }
-  .aviso { background:#1f2937; border-left:4px solid #f5c518; padding:14px 18px; border-radius:6px; margin-bottom:20px; color:#d1d5db; }
-  .badge-aegis { display:inline-block; padding:2px 8px; border-radius:10px; font-size:0.75em; font-weight:bold; background:#132a1c; color:#3ba55d; border:1px solid #3ba55d; }
-  .badge-shell { display:inline-block; padding:2px 8px; border-radius:10px; font-size:0.75em; font-weight:bold; background:#241a33; color:#9b59b6; border:1px solid #9b59b6; margin-left:4px; }
-  .champ-icon { width:28px; height:28px; border-radius:50%; vertical-align:middle; margin-right:6px; border:1px solid #f5c518; }
-  .destacado { display:flex; align-items:center; justify-content:center; gap:10px; margin-top:18px; position:relative; z-index:1; color:#9ca3af; font-size:0.85em; }
-  .destacado img { width:34px; height:34px; border-radius:50%; border:2px solid #9b59b6; animation: girar 6s linear infinite; }
-  footer { text-align:center; color:#6b7280; margin-top:40px; font-size:0.85em; }
+  .vacio { color:#6b7280; padding:24px; text-align:center; }
+  .badge-aegis { display:inline-block; padding:2px 8px; border-radius:10px; font-size:0.72em; font-weight:700; background:#132a1c; color:#3ba55d; border:1px solid #3ba55d; }
+  .badge-shell { display:inline-block; padding:2px 8px; border-radius:10px; font-size:0.72em; font-weight:700; background:#241a33; color:#9b59b6; border:1px solid #9b59b6; margin-left:4px; }
+  .barra { width:90px; height:8px; border-radius:6px; background:#20242e; overflow:hidden; }
+  .barra-fill { height:100%; border-radius:6px; transition: width .6s ease; background-size: 40px 100%; background-image: linear-gradient(90deg, rgba(255,255,255,0.15) 25%, transparent 25%, transparent 50%, rgba(255,255,255,0.15) 50%, rgba(255,255,255,0.15) 75%, transparent 75%, transparent); animation: barrido 2s linear infinite; }
+  .info-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:12px; }
+  .info-card { background:#12151c; border:1px solid #20242e; border-radius:10px; padding:16px; text-align:center; transition:transform .2s, border-color .2s; }
+  .info-card:hover { transform: translateY(-3px); border-color:#9b59b6; }
+  .info-icono { font-size:1.8em; margin-bottom:6px; }
+  footer { text-align:center; color:#6b7280; margin-top:44px; font-size:0.85em; position:relative; z-index:1; }
+  footer .divisor { max-width:400px; margin-left:auto; margin-right:auto; }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration:0.01ms !important; animation-iteration-count:1 !important; transition-duration:0.01ms !important; }
+  }
+  @media (max-width: 700px) {
+    header h1 { font-size:2.1em; letter-spacing:1px; }
+    .logo-escudo { font-size:1.7em; }
+    .stat-card { min-width:92px; padding:10px 14px; }
+    .stat-card .num { font-size:1.3em; }
+    table { font-size:0.82em; min-width:640px; }
+    th, td { padding:8px 8px; }
+    .podio-card { width:120px; padding:14px 10px; }
+    .podio-card.p1 { width:136px; }
+    .hex-corner { width:34px; height:34px; }
+  }
 </style>
 </head>
 <body>
+<div class="particulas">
+{% for p in particulas %}
+<span style="left:{{ p.left }}%; width:{{ p.size }}px; height:{{ p.size }}px; animation-duration:{{ p.dur }}s; animation-delay:-{{ p.delay }}s;"></span>
+{% endfor %}
+</div>
 <header>
+  <svg class="hex-corner tl" viewBox="0 0 100 100"><polygon points="50,3 96,26 96,74 50,97 4,74 4,26" fill="none" stroke="#f5c518" stroke-width="3"/><polygon points="50,22 78,36 78,64 50,78 22,64 22,36" fill="none" stroke="#9b59b6" stroke-width="1.5"/></svg>
+  <svg class="hex-corner tr" viewBox="0 0 100 100"><polygon points="50,3 96,26 96,74 50,97 4,74 4,26" fill="none" stroke="#f5c518" stroke-width="3"/><polygon points="50,22 78,36 78,64 50,78 22,64 22,36" fill="none" stroke="#9b59b6" stroke-width="1.5"/></svg>
   <div class="logo-fila">
     <span class="logo-escudo">🛡️</span>
     <h1>SoloQ Challenge</h1>
     <span class="logo-escudo" style="animation-delay: -1.8s;">💠</span>
   </div>
-  <p>Torneo de escalado de division/liga - {{ duracion }} dias</p>
-  <div class="estado">{{ estado_torneo }}</div>
-  <div class="premio">Premio: ${{ premio }} USD + insignias</div>
+  <p class="subtitulo">Torneo interno de escalado de division/liga - {{ duracion }} dias - LAN</p>
+  <div class="estado-fila">
+    <div class="estado">{{ estado_torneo }}</div>
+    <div class="premio">Premio: ${{ premio }} USD + insignias</div>
+    {% if fin_torneo_iso %}<div class="countdown" id="countdown"></div>{% endif %}
+  </div>
   <div class="stats">
     <div class="stat-card"><div class="num">{{ high|length + low|length }}</div><div class="label">Jugadores activos</div></div>
     <div class="stat-card"><div class="num">{{ pendientes|length }}</div><div class="label">Pendientes de clasificacion</div></div>
@@ -2163,78 +2273,150 @@ PAGINA_HTML = """
   <div class="destacado"><img src="{{ icono_destacado }}" alt=""> Maldicion Blue Shell del momento: podria tocarte <b style="color:#c9a8e0">{{ campeon_destacado }}</b></div>
   {% endif %}
 </header>
+
+{% macro podio(lista) %}
+{% if lista %}
+<div class="podio">
+  {% for j in lista[:3] %}
+  <div class="podio-card p{{ loop.index }}">
+    {% if loop.index == 1 %}<div class="podio-corona">👑</div>{% endif %}
+    <div class="podio-medalla">{{ '🥇' if loop.index==1 else ('🥈' if loop.index==2 else '🥉') }}</div>
+    <div class="nombre">{{ j.nombre }}</div>
+    <span class="tier-badge" style="border-color:{{ tier_colors.get(j.tier_actual,'#6b7280') }}; color:{{ tier_colors.get(j.tier_actual,'#6b7280') }};">{{ j.tier_actual }} {{ j.rank_actual }}</span>
+    <div class="pts">{{ j.total }} pts</div>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+{% endmacro %}
+
+{% macro tabla_jugadores(lista) %}
+{% if lista %}
+{% set max_total = (lista|map(attribute='total')|list|max) %}
+<div class="tabla-wrap">
+<table>
+  <tr><th>#</th><th>Jugador</th><th>Rango</th><th>Progreso</th><th>Escalado</th><th>Bonus</th><th>Castigos</th><th>Voz</th><th>Escudos / Aegis</th><th>Total</th></tr>
+  {% for j in lista %}
+  {% set pct = 0 %}
+  {% if max_total and max_total > 0 %}{% set pct = (j.total / max_total * 100) %}{% endif %}
+  {% if pct < 0 %}{% set pct = 0 %}{% endif %}
+  {% if pct > 100 %}{% set pct = 100 %}{% endif %}
+  <tr>
+    <td class="{{ 'pos1' if loop.index==1 else ('pos2' if loop.index==2 else ('pos3' if loop.index==3 else '')) }}">{{ loop.index }}</td>
+    <td>{{ j.nombre }}</td>
+    <td><span class="tier-badge" style="border-color:{{ tier_colors.get(j.tier_actual,'#6b7280') }}; color:{{ tier_colors.get(j.tier_actual,'#6b7280') }};">{{ j.tier_actual }} {{ j.rank_actual }}</span></td>
+    <td><div class="barra"><div class="barra-fill" style="width:{{ pct|round(1) }}%; background:{{ tier_colors.get(j.tier_actual,'#f5c518') }};"></div></div></td>
+    <td>{{ j.escalado }}</td>
+    <td>+{{ j.bonus }}</td>
+    <td>-{{ j.castigos }}</td>
+    <td class="voz-ok">{{ j.tiempo_voz_min }} min</td>
+    <td><span class="badge-shell">{{ j.escudos }} escudo(s)</span>{% if j.aegis_activo %}<span class="badge-aegis">Aegis {{ j.aegis_restante }}h</span>{% endif %}</td>
+    <td><b>{{ j.total }}</b></td>
+  </tr>
+  {% endfor %}
+</table>
+</div>
+{% else %}
+<p class="vacio">Aun no hay jugadores en esta categoria.</p>
+{% endif %}
+{% endmacro %}
+
 <div class="contenedor">
-  <div class="aviso">Para que tus puntos sean validos debes conectarte al chat de voz del servidor de Discord (cualquier canal) mientras juegas tus partidas. El ranking se basa en escalar de division/liga (Blue Shell / Escudos Azules / Aegis activos).</div>
-  <div class="categoria">
-    <h2>High Elo</h2>
-    {% if high %}
-    <table>
-      <tr><th>#</th><th>Jugador</th><th>Rango actual</th><th>Escalado</th><th>Bonus</th><th>Castigos</th><th>Voz</th><th>Escudos / Aegis</th><th>Total</th></tr>
-      {% for j in high %}
-      <tr>
-        <td class="{{ 'pos1' if loop.index==1 else ('pos2' if loop.index==2 else ('pos3' if loop.index==3 else '')) }}">{{ loop.index }}</td>
-        <td>{{ j.nombre }}</td>
-        <td>{{ j.tier_actual }} {{ j.rank_actual }}</td>
-        <td>{{ j.escalado }}</td>
-        <td>+{{ j.bonus }}</td>
-        <td>-{{ j.castigos }}</td>
-        <td class="voz-ok">{{ j.tiempo_voz_min }} min</td>
-        <td><span class="badge-shell">{{ j.escudos }} escudo(s)</span>{% if j.aegis_activo %}<span class="badge-aegis">Aegis {{ j.aegis_restante }}h</span>{% endif %}</td>
-        <td><b>{{ j.total }}</b></td>
-      </tr>
-      {% endfor %}
-    </table>
-    {% else %}
-    <p class="vacio">Aun no hay jugadores en esta categoria.</p>
-    {% endif %}
+  <div class="aviso"><span>ℹ️</span><span>Para que tus puntos sean validos debes conectarte al chat de voz del servidor de Discord (cualquier canal) mientras juegas tus partidas. El ranking se basa en escalar de division/liga (Blue Shell / Escudos Azules / Aegis activos).</span></div>
+
+  <div class="tabs">
+    <button class="tab-btn activo" onclick="mostrarTab('high', this)">🏆 High Elo</button>
+    <button class="tab-btn" onclick="mostrarTab('low', this)">⚔️ Low Elo</button>
   </div>
-  <div class="categoria">
-    <h2>Low Elo</h2>
-    {% if low %}
-    <table>
-      <tr><th>#</th><th>Jugador</th><th>Rango actual</th><th>Escalado</th><th>Bonus</th><th>Castigos</th><th>Voz</th><th>Escudos / Aegis</th><th>Total</th></tr>
-      {% for j in low %}
-      <tr>
-        <td class="{{ 'pos1' if loop.index==1 else ('pos2' if loop.index==2 else ('pos3' if loop.index==3 else '')) }}">{{ loop.index }}</td>
-        <td>{{ j.nombre }}</td>
-        <td>{{ j.tier_actual }} {{ j.rank_actual }}</td>
-        <td>{{ j.escalado }}</td>
-        <td>+{{ j.bonus }}</td>
-        <td>-{{ j.castigos }}</td>
-        <td class="voz-ok">{{ j.tiempo_voz_min }} min</td>
-        <td><span class="badge-shell">{{ j.escudos }} escudo(s)</span>{% if j.aegis_activo %}<span class="badge-aegis">Aegis {{ j.aegis_restante }}h</span>{% endif %}</td>
-        <td><b>{{ j.total }}</b></td>
-      </tr>
-      {% endfor %}
-    </table>
-    {% else %}
-    <p class="vacio">Aun no hay jugadores en esta categoria.</p>
-    {% endif %}
+  <div id="tab-high" class="tab-panel activo">
+    <div class="categoria">
+      <h2>High Elo <span class="sub">Master · GM · Challenger</span></h2>
+      {{ podio(high) }}
+      {{ tabla_jugadores(high) }}
+    </div>
   </div>
+  <div id="tab-low" class="tab-panel">
+    <div class="categoria">
+      <h2>Low Elo <span class="sub">Hierro - Diamante</span></h2>
+      {{ podio(low) }}
+      {{ tabla_jugadores(low) }}
+    </div>
+  </div>
+
   {% if sin_voz %}
+  <div class="divisor"><span>◆</span></div>
   <div class="categoria">
-    <h2>Sin verificar (falta chat de voz)</h2>
+    <h2>Sin verificar <span class="sub">falta chat de voz</span></h2>
+    <div class="tabla-wrap">
     <table>
       <tr><th>Jugador</th><th>Tiempo en voz</th></tr>
       {% for j in sin_voz %}
       <tr><td>{{ j.nombre }}</td><td class="voz-no">{{ j.tiempo_voz_min }} min</td></tr>
       {% endfor %}
     </table>
+    </div>
   </div>
   {% endif %}
+
   {% if pendientes %}
+  <div class="divisor"><span>◆</span></div>
   <div class="categoria">
-    <h2>Pendientes de clasificacion (Directiva)</h2>
+    <h2>Pendientes de clasificacion <span class="sub">Directiva</span></h2>
+    <div class="tabla-wrap">
     <table>
       <tr><th>Jugador</th><th>Rango actual</th><th>Elo previo declarado</th></tr>
       {% for j in pendientes %}
       <tr><td>{{ j.nombre }}</td><td>{{ j.tier_actual }} {{ j.rank_actual }}</td><td>{{ j.elo_previo or '-' }}</td></tr>
       {% endfor %}
     </table>
+    </div>
   </div>
   {% endif %}
+
+  <div class="divisor"><span>◆</span></div>
+  <div class="categoria">
+    <h2>Como conseguir un Escudo Azul</h2>
+    <div class="info-grid">
+      <div class="info-card"><div class="info-icono">🔥</div><div>Pentakill / Cuadrakill</div></div>
+      <div class="info-card"><div class="info-icono">⚔️</div><div>22+ kills o 30+ asistencias</div></div>
+      <div class="info-card"><div class="info-icono">📈</div><div>KDA perfecto &gt; 20</div></div>
+      <div class="info-card"><div class="info-icono">⏱️</div><div>Victoria de 40+ minutos</div></div>
+      <div class="info-card"><div class="info-icono">🔁</div><div>Racha de 6 victorias</div></div>
+      <div class="info-card"><div class="info-icono">💰</div><div>Comeback de 7000+ de oro</div></div>
+      <div class="info-card"><div class="info-icono">🎯</div><div>5 victorias con el mismo campeon</div></div>
+      <div class="info-card"><div class="info-icono">🗡️</div><div>Vencer a alguien con Blue Shell (se la robas)</div></div>
+    </div>
+  </div>
 </div>
-<footer>Actualizado automaticamente - Pagina se refresca cada 60 segundos</footer>
+<footer>
+  <div class="divisor"><span>◆</span></div>
+  Actualizado automaticamente - Pagina se refresca cada 60 segundos
+</footer>
+<script>
+function mostrarTab(id, btn) {
+  document.querySelectorAll('.tab-panel').forEach(function(p) { p.classList.remove('activo'); });
+  document.getElementById('tab-' + id).classList.add('activo');
+  document.querySelectorAll('.tab-btn').forEach(function(b) { b.classList.remove('activo'); });
+  btn.classList.add('activo');
+}
+const finTorneo = {{ fin_torneo_iso|tojson if fin_torneo_iso else 'null' }};
+function actualizarCountdown() {
+  const el = document.getElementById('countdown');
+  if (!el) return;
+  if (!finTorneo) { el.textContent = ''; return; }
+  const ahora = new Date();
+  const fin = new Date(finTorneo);
+  let diff = fin - ahora;
+  if (diff <= 0) { el.textContent = 'Torneo finalizado'; return; }
+  const d = Math.floor(diff / 86400000); diff -= d * 86400000;
+  const h = Math.floor(diff / 3600000); diff -= h * 3600000;
+  const m = Math.floor(diff / 60000); diff -= m * 60000;
+  const s = Math.floor(diff / 1000);
+  el.textContent = '⏳ ' + d + 'd ' + h + 'h ' + m + 'm ' + s + 's para el cierre';
+}
+actualizarCountdown();
+setInterval(actualizarCountdown, 1000);
+</script>
 </body>
 </html>
 """
@@ -2245,13 +2427,27 @@ def home():
     db = cargar_db()
     high, low, pendientes, sin_voz = calcular_tabla(db)
     campeon_destacado = random.choice(CAMPEONES_POOL)
+    fin_torneo_iso = None
+    if db.get('torneo_iniciado'):
+        try:
+            inicio = datetime.datetime.fromisoformat(db.get('inicio_torneo'))
+            fin_torneo_iso = (inicio + datetime.timedelta(days=DURACION_TORNEO)).isoformat()
+        except Exception:
+            fin_torneo_iso = None
+    particulas = [
+        {'left': random.randint(0, 100), 'dur': round(random.uniform(9, 20), 1),
+         'delay': round(random.uniform(0, 15), 1), 'size': random.randint(2, 4)}
+        for _ in range(26)
+    ]
     return render_template_string(PAGINA_HTML, high=high, low=low, pendientes=pendientes, sin_voz=sin_voz,
                                    duracion=DURACION_TORNEO, estado_torneo=calcular_estado_torneo(db),
                                    premio=PREMIO_GANADOR_USD,
                                    fondo_url=splash_campeon(campeon_destacado),
                                    campeon_destacado=campeon_destacado,
-                                   icono_destacado=icono_campeon(campeon_destacado))
-
+                                   icono_destacado=icono_campeon(campeon_destacado),
+                                   tier_colors=TIER_COLORES_WEB,
+                                   fin_torneo_iso=fin_torneo_iso,
+                                   particulas=particulas)
 
 @app.route('/api/tabla')
 def api_tabla():
