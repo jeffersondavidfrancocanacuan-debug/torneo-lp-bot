@@ -497,8 +497,7 @@ def _cargar_registros_desde_sheets():
                 'puntos': int(float(f.get('puntos') or 0)),
                 'motivo': f.get('motivo', ''),
                 'fecha': f.get('fecha', ''),
-            })
-        return registros
+            })        return registros
     except Exception as e:
         print(f'Error cargando registros desde Google Sheets: {e}')
         return []
@@ -997,8 +996,7 @@ async def registrar(interaction: discord.Interaction, nombre: str, elo_previo: s
         'escudo_hasta': '',
         'ultima_maldicion_recibida': '',
         'ultimo_match_procesado': '',
-        'racha_victorias': 0,
-        'campeones_ganados': {},
+        'racha_victorias': 0,        'campeones_ganados': {},
         'victorias_con_castigo_contador': 0,
     }
     if 'inicio_torneo' not in db:
@@ -1498,7 +1496,6 @@ async def maldecir(interaction: discord.Interaction, usuario: discord.Member):
     if caster_data.get('escudos', 0) <= 0:
         await interaction.followup.send('No tienes Escudos Azules disponibles. Ganalos desbloqueando logros o pidiendole uno a la directiva por una hazana.')
         return
-
     if torneo_en_ultimas_48h(db):
         await interaction.followup.send(
             f'El sistema Blue Shell esta desactivado: quedan menos de {TORNEO_BLOQUEO_FINAL_HORAS}h para el cierre del torneo.')
@@ -1689,6 +1686,30 @@ async def reiniciar_registro(interaction: discord.Interaction, confirmar: str):
     await interaction.followup.send(
         'Se borraron todos los registros. Todos deben usar `/registrar` de nuevo con sus cuentas nuevas '
         '(pueden usar `elo_previo` para que la directiva sepa su nivel real al revisar).')
+
+
+@tree.command(name='eliminar_registro', description='(Directiva) Elimina el registro de UN jugador para que pueda registrarse de nuevo')
+@app_commands.describe(usuario='Jugador cuyo registro se va a borrar', confirmar='Escribe SI (mayusculas) para confirmar el borrado')
+async def eliminar_registro(interaction: discord.Interaction, usuario: discord.Member, confirmar: str):
+    if not await requiere_directiva(interaction):
+        return
+    await interaction.response.defer()
+    if confirmar != 'SI':
+        await interaction.followup.send(
+            'Accion cancelada. Escribe `confirmar: SI` (en mayusculas) para confirmar el borrado del registro de '
+            f'{usuario.mention} (se pierde su LP, bonus, castigos, logros, escudos y tiempo de voz acumulado de esa cuenta).')
+        return
+    db = cargar_db()
+    for puuid, data in list(jugadores_validos(db).items()):
+        if data.get('discord_id') == str(usuario.id):
+            nombre_borrado = data.get('nombre', '?')
+            del db[puuid]
+            guardar_db(db, forzar=True)
+            await interaction.followup.send(
+                f'Se borro el registro de **{nombre_borrado}** (<@{usuario.id}>). '
+                f'Ya puede usar `/registrar` de nuevo con su nueva cuenta.')
+            return
+    await interaction.followup.send(f'{usuario.mention} no tiene ningun registro activo en el torneo.')
 
 
 @tree.command(name='iniciar_torneo', description='(Directiva) Inicia oficialmente el torneo y reinicia el progreso de pruebas')
@@ -1973,8 +1994,7 @@ async def _procesar_partida_jugador(puuid, data, validos, headers):
                     idx = min(15, len(frames) - 1)
                     if idx >= 0:
                         pframes = frames[idx]['participantFrames']
-                        oro_propio = sum(pf['totalGold'] for pid_str, pf in pframes.items() if pid_to_team.get(int(pid_str)) == mi_team)
-                        oro_rival = sum(pf['totalGold'] for pid_str, pf in pframes.items() if pid_to_team.get(int(pid_str)) != mi_team)
+                        oro_propio = sum(pf['totalGold'] for pid_str, pf in pframes.items() if pid_to_team.get(int(pid_str)) == mi_team)                        oro_rival = sum(pf['totalGold'] for pid_str, pf in pframes.items() if pid_to_team.get(int(pid_str)) != mi_team)
                         if oro_rival - oro_propio >= 7000:
                             ganar_escudos(1, 'Comeback de 7000+ de oro')
             except Exception:
@@ -2379,7 +2399,7 @@ PAGINA_HTML = """
     </div>
     <span class="navbar-chip">SQC 2026</span>
     <div class="navbar-links">
-      <a href="#tabla" class="activo"><svg class="icon" viewBox="0 0 24 24"><path d="M8 4h8v4a4 4 0 0 1-8 0V4z"/><path d="M8 5H4v2a4 4 0 0 0 4 4M16 5h4v2a4 4 0 0 1-4 4"/></svg>Ranking</a>
+      <a href="#tabla" class="activo"><svg class="icon" viewBox="0 0 24 24"><path d="M8 4h8v4a4 4 0 0 1-8 0V4z"/><path d="M8 5H4v2a4 4 0 0 0 4 4M16 5h4v2a4 4 0 0 1-4 4"/><path d="M12 12v4M9 20h6M10 16h4v4h-4v-4z"/></svg>Ranking</a>
       <a href="#escudos"><svg class="icon" viewBox="0 0 24 24"><path d="M12 2c1 3-2 4-2 7a4 4 0 1 0 8 0c0-2-1-3-1-5 2 1 3 4 3 7a6 6 0 1 1-12 0c0-4 2-6 4-9z"/></svg>Escudos Azules</a>
       <a href="#inicio"><svg class="icon" viewBox="0 0 24 24"><path d="M3 11l9-7 9 7"/><path d="M5 10v10h14V10"/></svg>Inicio</a>
     </div>
