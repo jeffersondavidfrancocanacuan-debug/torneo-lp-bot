@@ -497,7 +497,9 @@ def _cargar_registros_desde_sheets():
                 'puntos': int(float(f.get('puntos') or 0)),
                 'motivo': f.get('motivo', ''),
                 'fecha': f.get('fecha', ''),
-            })        return registros
+            })
+
+        return registros
     except Exception as e:
         print(f'Error cargando registros desde Google Sheets: {e}')
         return []
@@ -996,7 +998,8 @@ async def registrar(interaction: discord.Interaction, nombre: str, elo_previo: s
         'escudo_hasta': '',
         'ultima_maldicion_recibida': '',
         'ultimo_match_procesado': '',
-        'racha_victorias': 0,        'campeones_ganados': {},
+        'racha_victorias': 0,
+        'campeones_ganados': {},
         'victorias_con_castigo_contador': 0,
     }
     if 'inicio_torneo' not in db:
@@ -1496,6 +1499,7 @@ async def maldecir(interaction: discord.Interaction, usuario: discord.Member):
     if caster_data.get('escudos', 0) <= 0:
         await interaction.followup.send('No tienes Escudos Azules disponibles. Ganalos desbloqueando logros o pidiendole uno a la directiva por una hazana.')
         return
+
     if torneo_en_ultimas_48h(db):
         await interaction.followup.send(
             f'El sistema Blue Shell esta desactivado: quedan menos de {TORNEO_BLOQUEO_FINAL_HORAS}h para el cierre del torneo.')
@@ -1994,7 +1998,8 @@ async def _procesar_partida_jugador(puuid, data, validos, headers):
                     idx = min(15, len(frames) - 1)
                     if idx >= 0:
                         pframes = frames[idx]['participantFrames']
-                        oro_propio = sum(pf['totalGold'] for pid_str, pf in pframes.items() if pid_to_team.get(int(pid_str)) == mi_team)                        oro_rival = sum(pf['totalGold'] for pid_str, pf in pframes.items() if pid_to_team.get(int(pid_str)) != mi_team)
+                        oro_propio = sum(pf['totalGold'] for pid_str, pf in pframes.items() if pid_to_team.get(int(pid_str)) == mi_team)
+                        oro_rival = sum(pf['totalGold'] for pid_str, pf in pframes.items() if pid_to_team.get(int(pid_str)) != mi_team)
                         if oro_rival - oro_propio >= 7000:
                             ganar_escudos(1, 'Comeback de 7000+ de oro')
             except Exception:
@@ -2018,6 +2023,7 @@ async def _procesar_partida_jugador(puuid, data, validos, headers):
 @tasks.loop(minutes=DROP_DIARIO_INTERVALO_MIN)
 async def revisar_partidas_recientes():
     db = cargar_db()
+
     validos = jugadores_validos(db)
     if not validos:
         return
@@ -2418,6 +2424,7 @@ PAGINA_HTML = """
 {% endfor %}
 </div>
 <header id="inicio">
+
   <svg class="hex-corner tl" viewBox="0 0 100 100"><polygon points="50,3 96,26 96,74 50,97 4,74 4,26" fill="none" stroke="#f5c518" stroke-width="3"/><polygon points="50,22 78,36 78,64 50,78 22,64 22,36" fill="none" stroke="#9b59b6" stroke-width="1.5"/></svg>
   <svg class="hex-corner tr" viewBox="0 0 100 100"><polygon points="50,3 96,26 96,74 50,97 4,74 4,26" fill="none" stroke="#f5c518" stroke-width="3"/><polygon points="50,22 78,36 78,64 50,78 22,64 22,36" fill="none" stroke="#9b59b6" stroke-width="1.5"/></svg>
   <div class="logo-fila">
