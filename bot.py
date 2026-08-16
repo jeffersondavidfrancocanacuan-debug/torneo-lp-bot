@@ -1096,7 +1096,7 @@ async def perfil(interaction: discord.Interaction):
     user_id = str(interaction.user.id)
     flush_voice_time(user_id)
     db = cargar_db()
-    high, low, pendientes, sin_voz = calcular_tabla(db)
+    high, low, pendientes, sin_voz = await asyncio.to_thread(calcular_tabla, db)
 
     objetivo = None
     for j in high + low + pendientes + sin_voz:
@@ -1335,7 +1335,7 @@ async def mostrar_tabla(canal):
     if not jugadores_validos(db):
         await canal.send('No hay jugadores registrados.')
         return
-    high, low, pendientes, sin_voz = calcular_tabla(db)
+    high, low, pendientes, sin_voz = await asyncio.to_thread(calcular_tabla, db)
 
     embed = discord.Embed(title='Clasificacion del Torneo SoloQ Challenge', color=0x00ff00,
                           timestamp=datetime.datetime.now())
@@ -1438,7 +1438,7 @@ async def pendientes(interaction: discord.Interaction):
         return
     await interaction.response.defer()
     db = cargar_db()
-    _, _, pend, _ = calcular_tabla(db)
+    _, _, pend, _ = await asyncio.to_thread(calcular_tabla, db)
     if not pend:
         await interaction.followup.send('No hay cuentas pendientes de clasificacion.')
         return
