@@ -848,6 +848,24 @@ def calcular_estado_torneo(db):
 
 # ------------------- CALCULO DE TABLA -------------------
 
+def discord_tag_de(discord_id):
+    """Nombre de usuario/tag de Discord del jugador (ej. 'usuario' o 'usuario#1234'), leido desde
+    la cache en memoria del cliente de discord.py (member cache del servidor). No hace ninguna
+    llamada de red, es una simple lectura de cache, por lo que es seguro llamarla desde cualquier
+    hilo (incluyendo las rutas sincronas de Flask). Devuelve '' si el bot todavia no tiene cacheado
+    a ese miembro (por ejemplo, si aun no ha terminado de conectar) o si ya no esta en el servidor."""
+    try:
+        guild = client.get_guild(int(DISCORD_GUILD_ID))
+        if not guild:
+            return ''
+        member = guild.get_member(int(discord_id))
+        if not member:
+            return ''
+        return str(member)
+    except Exception:
+        return ''
+
+
 def calcular_tabla(db):
     """Devuelve (high, low, pendientes, sin_voz) con los datos ya frescos de Riot.
     El orden dentro de cada categoria se basa en 'escalado' (division/liga), no solo LP crudo."""
@@ -873,6 +891,7 @@ def calcular_tabla(db):
         jugador = {
             'puuid': puuid,
             'discord_id': data['discord_id'],
+            'discord_tag': discord_tag_de(data['discord_id']),
             'nombre': data['nombre'],
             'lp_ganados': lp_ganados,
             'lp_actual': info['lp'],
@@ -2532,7 +2551,7 @@ PAGINA_HTML = """
       <img class="avatar big" src="{{ j.avatar }}" alt="">
       <div>
         <div class="nombre">{{ j.nombre.split('#')[0] }}</div>
-        <div class="subnombre">{{ j.nombre }}</div>
+        <div class="subnombre">{{ j.nombre }}{% if j.discord_tag %} · @{{ j.discord_tag }}{% endif %}</div>
       </div>
     </div>
     <div class="lp-fila pts">
@@ -2565,7 +2584,7 @@ PAGINA_HTML = """
         <img class="avatar" src="{{ j.avatar }}" alt="">
         <div class="nombres">
           <div class="principal">{{ j.nombre.split('#')[0] }}</div>
-          <div class="tag">#{{ j.nombre.split('#')[1] if '#' in j.nombre else '' }}</div>
+          <div class="tag">#{{ j.nombre.split('#')[1] if '#' in j.nombre else '' }}{% if j.discord_tag %} · @{{ j.discord_tag }}{% endif %}</div>
         </div>
       </div>
     </td>
