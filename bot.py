@@ -2531,7 +2531,7 @@ PAGINA_HTML = """
     </div>
     <div class="lp-fila pts">
       <svg class="icon flame" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M12 2c1 3-2 4-2 7a4 4 0 1 0 8 0c0-2-1-3-1-5 2 1 3 4 3 7a6 6 0 1 1-12 0c0-4 2-6 4-9z"/></svg>
-      <span class="lp-num">{{ j.total }}</span><span style="font-size:0.5em; color:#8a8a92; font-weight:700;">LP</span>
+      <span class="lp-num">{{ j.total }}</span><span style="font-size:0.5em; color:#8a8a92; font-weight:700;">PTS</span>
     </div>
     <div class="podio-stats">
       <div class="pstat"><div class="v">{{ j.wins }}W {{ j.losses }}L</div><div class="l">{{ j.partidas }} partidas</div></div>
@@ -2595,7 +2595,7 @@ PAGINA_HTML = """
 {% endmacro %}
 
 <div class="contenedor">
-  <div class="aviso"><span class="icon-circle"><svg class="icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 11h1v6h1"/></svg></span><span>Para que tus puntos sean validos debes conectarte al chat de voz del servidor de Discord (cualquier canal) mientras juegas tus partidas. El ranking se basa en escalar de division/liga (Blue Shell / Escudos Azules / Aegis activos).</span></div>
+  <div class="aviso"><span class="icon-circle"><svg class="icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 11h1v6h1"/></svg></span><span>Para que tus puntos sean validos debes conectarte al chat de voz del servidor de Discord (cualquier canal) mientras juegas tus partidas. El orden de la tabla se calcula por PTS (escalado de division/liga: subir de division y de sub-rango pesa mas que acumular LP), no por la suma cruda de LP. El LP real de cada jugador se sigue mostrando en las columnas "Elo (LP)" y "±LP".</span></div>
 
   <div id="tabla" class="filtros-fila">
     <div class="filtros-izq">
