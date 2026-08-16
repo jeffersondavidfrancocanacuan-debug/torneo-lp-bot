@@ -170,35 +170,91 @@ def splash_campeon(nombre):
     return f'https://ddragon.leagueoflegends.com/cdn/img/champion/splash/{n}_0.jpg'
 
 
-# Pares de hechizos de invocador posibles para la maldicion de tipo 'hechizos'.
+_CAMPEON_ID_A_NOMBRE = {}
+
+
+def _cargar_mapa_campeones():
+    """Carga (una sola vez, en memoria) el mapa championId numerico -> nombre, usando Data Dragon
+    (gratuito, sin API key). Se necesita porque Champion Mastery v4 solo devuelve IDs numericos."""
+    global _CAMPEON_ID_A_NOMBRE
+    if _CAMPEON_ID_A_NOMBRE:
+        return
+    try:
+        r = requests.get(f'https://ddragon.leagueoflegends.com/cdn/{DDRAGON_VERSION}/data/en_US/champion.json', timeout=8)
+        data = r.json().get('data', {})
+        for info in data.values():
+            _CAMPEON_ID_A_NOMBRE[int(info['key'])] = info['name']
+    except Exception:
+        pass
+
+
+async def top_3_campeones_mas_jugados(puuid, region):
+    """Consulta la API gratuita Champion Mastery v4 de Riot para saber los 3 campeones con mas
+    maestria de un jugador (proxy fiable de 'mas jugados', ya que la maestria crece con las partidas).
+    Devuelve una lista de nombres, o None si no se pudo obtener."""
+    plataforma = PLATFORM_MAP.get((region or 'lan').lower())
+    if not plataforma:
+        return None
+    try:
+        _cargar_mapa_campeones()
+        url = f'https://{plataforma}.api.riotgames.com/lol/champion-mastery/v4/champion-masteries/by-puuid/{puuid}/top?count=3'
+        r = requests.get(url, headers={'X-Riot-Token': RIOT_API_KEY}, timeout=8)
+        if r.status_code != 200:
+            return None
+        nombres = []
+        for entry in r.json():
+            nombre = _CAMPEON_ID_A_NOMBRE.get(entry.get('championId'))
+            if nombre:
+                nombres.append(nombre)
+        return nombres or None
+    except Exception:
+        return None
+
+
+# Pares de hechizos de invocador posibles para la maldicion 'hechizos_cambiados'.
 HECHIZOS_POSIBLES = [
     ('Flash', 'Ignite'), ('Flash', 'Exhaust'), ('Flash', 'Barrier'), ('Flash', 'Cleanse'),
     ('Ghost', 'Heal'), ('Ghost', 'Ignite'), ('Teleport', 'Cleanse'), ('Teleport', 'Ignite'),
     ('Exhaust', 'Ignite'), ('Heal', 'Barrier'), ('Smite', 'Flash'), ('Smite', 'Ignite'),
 ]
 
-# Roles/lineas posibles para la maldicion de tipo 'rol'.
-ROLES_POSIBLES = ['Top', 'Jungla', 'Mid', 'ADC', 'Support']
+# Clases de campeon (tags oficiales de Riot) para la maldicion 'clase_aleatoria'.
+CLASES_CAMPEONES = {
+    'Tirador': ['Ashe', 'Caitlyn', 'Jinx', "Kai'Sa", 'Jhin', 'Vayne', 'Ezreal', 'Miss Fortune', 'Draven',
+                'Twitch', 'Varus', 'Sivir', 'Xayah', 'Zeri', 'Samira', 'Aphelios', 'Smolder', "Kog'Maw", 'Tristana'],
+    'Mago': ['Ahri', 'Annie', 'Lux', 'Syndra', 'Veigar', 'Orianna', 'Ziggs', 'Xerath', 'Brand', 'Vex',
+             'Malzahar', 'Viktor', 'Ryze', 'Azir', 'Cassiopeia', 'Karthus', 'Zoe', 'Hwei', 'Swain', 'Anivia'],
+    'Asesino': ['Zed', 'Akali', 'Talon', 'Katarina', 'Fizz', 'Kassadin', 'Qiyana', "Kha'Zix", 'Naafiri',
+                'Ekko', 'Evelynn', 'Rengar', 'Nocturne', 'LeBlanc', 'Pyke'],
+    'Luchador': ['Garen', 'Darius', 'Aatrox', 'Riven', 'Irelia', 'Jax', 'Camille', 'Fiora', 'Renekton',
+                 'Wukong', 'Gnar', 'Gwen', 'Trundle', 'Sett', 'Yone', 'Yasuo', 'Volibear', 'Illaoi', 'Olaf', 'Urgot'],
+    'Tanque': ['Malphite', 'Ornn', 'Sion', 'Maokai', 'Nautilus', 'Leona', 'Braum', 'Rammus', 'Amumu', 'Zac',
+               'Sejuani', 'Shen', "Cho'Gath", 'Nunu & Willump', 'Rell', 'Alistar', 'Galio'],
+    'Soporte': ['Soraka', 'Nami', 'Lulu', 'Janna', 'Karma', 'Yuumi', 'Milio', 'Renata Glasc', 'Bard',
+                'Senna', 'Taric', 'Seraphine'],
+}
 
-# Retos adicionales de la maldicion de tipo 'reto' (instruccion directa, sin variables).
-RETOS_POSIBLES = [
-    'No puedes comprar ningun objeto de vision extra (control wards) en toda la partida.',
-    'Debes jugar con la camara bloqueada (locked camera) toda la partida.',
-    'Tienes prohibido usar el chat de equipo, solo puedes usar pings.',
-    'Tienes prohibido usar pings en toda la partida.',
-    'No puedes recallar a base durante los primeros 5 minutos de partida, pase lo que pase.',
-    'Debes comprar Boots of Speed como primer objeto obligatoriamente.',
-    'No puedes comprar ningun objeto mitico/legendario hasta el minuto 15.',
-    'Debes silenciar (mute) al jugador con mejor KDA del equipo rival apenas empiece la partida.',
-    'Solo puedes usar un summoner spell (el otro debe quedar en cooldown toda la partida, no lo uses).',
+# Los 10 castigos oficiales del torneo modelo (soloqchallenge.gg), con su probabilidad real de salir
+# UNA VEZ que ya se descarto el Reverse (que se sortea aparte, segun la posicion del objetivo).
+CASTIGOS_OFICIALES = [
+    ('sin_3_campeones', 17, None),
+    ('yuumi', 11, 'Debes jugar obligatoriamente **Yuumi** en tu proxima partida.'),
+    ('campeon_aleatorio', 11, None),
+    ('sin_flash', 11, 'No puedes llevar **Flash** como hechizo de invocador en tu proxima partida.'),
+    ('autofill', 11, 'Debes entrar a cola en modo **Autofill** (posicion "Cualquiera", sin elegir rol principal) en tu proxima partida.'),
+    ('sin_botas', 11, 'No puedes comprar **botas** (ningun tier) ni llevar la runa **Pies Veloces** en tu proxima partida.'),
+    ('hechizos_cambiados', 6, None),
+    ('sin_pociones_pinks', 6, 'No puedes comprar **pociones** ni **Control Wards (pinks)** en toda la partida.'),
+    ('sin_objetos_min15', 6, 'No puedes completar ningun objeto **mitico/legendario** hasta el minuto 15.'),
+    ('clase_aleatoria', 4, None),
 ]
 
 
 def generar_efecto_maldicion(posicion_objetivo=None):
-    """Devuelve un dict {tipo, texto, opciones, elegido} representando el efecto de la maldicion.
-    Primero se sortea el Reverse segun la posicion del objetivo; si no sale, se sortea un efecto
-    entre una lista amplia de variantes ya generadas (cada una con su propio sorteo interno de
-    campeon/hechizos/rol/reto), lo que da mucha mas variedad que elegir solo entre 4 tipos fijos."""
+    """Devuelve un dict {tipo, texto, opciones, elegido} representando el efecto de la maldicion,
+    replicando el sistema Blue Shell del torneo modelo: primero se sortea el Reverse segun la
+    posicion del objetivo (tabla oficial, ver probabilidad_reverse), y si no sale, se sortea uno
+    de los 10 castigos oficiales respetando sus probabilidades reales (CASTIGOS_OFICIALES)."""
     if random.random() < probabilidad_reverse(posicion_objetivo):
         return {
             'tipo': 'reverse',
@@ -206,56 +262,31 @@ def generar_efecto_maldicion(posicion_objetivo=None):
             'opciones': [], 'elegido': None,
         }
 
-    candidatos = []
+    tipos = [c[0] for c in CASTIGOS_OFICIALES]
+    pesos = [c[1] for c in CASTIGOS_OFICIALES]
+    tipo = random.choices(tipos, weights=pesos, k=1)[0]
 
-    # Elegir 1 de 3 campeones (sobre la gama completa).
-    opciones_campeones = random.sample(CAMPEONES_POOL, 3)
-    candidatos.append({
-        'tipo': 'campeon',
-        'texto': f'Debes elegir y jugar uno de estos 3 campeones en tu proxima partida (usa /elegir_campeon): **{", ".join(opciones_campeones)}**.',
-        'opciones': opciones_campeones, 'elegido': None,
-    })
+    if tipo == 'sin_3_campeones':
+        # El texto definitivo (con los nombres reales) se completa en /maldecir, que si puede
+        # consultar de forma asincrona la maestria de campeones del jugador afectado via la API de Riot.
+        return {'tipo': tipo, 'texto': 'No puedes jugar tus 3 campeones mas jugados en tu proxima partida.',
+                'opciones': [], 'elegido': None}
+    if tipo == 'campeon_aleatorio':
+        campeon = random.choice(CAMPEONES_POOL)
+        return {'tipo': tipo, 'texto': f'Debes jugar obligatoriamente a **{campeon}** en tu proxima partida.',
+                'opciones': [campeon], 'elegido': campeon}
+    if tipo == 'hechizos_cambiados':
+        par = random.choice(HECHIZOS_POSIBLES)
+        return {'tipo': tipo, 'texto': f'Hechizos de invocador obligatorios: solo **{par[0]} + {par[1]}** en tu proxima partida.',
+                'opciones': [], 'elegido': None}
+    if tipo == 'clase_aleatoria':
+        clase = random.choice(list(CLASES_CAMPEONES.keys()))
+        ejemplos = ', '.join(random.sample(CLASES_CAMPEONES[clase], min(4, len(CLASES_CAMPEONES[clase]))))
+        return {'tipo': tipo, 'texto': f'Debes jugar un campeon de la clase **{clase}** en tu proxima partida (ej: {ejemplos}).',
+                'opciones': [], 'elegido': None}
 
-    # Campeon fijo: un unico campeon aleatorio de toda la gama, sin eleccion posible.
-    campeon_fijo = random.choice(CAMPEONES_POOL)
-    candidatos.append({
-        'tipo': 'campeon_fijo',
-        'texto': f'Debes jugar obligatoriamente a **{campeon_fijo}** en tu proxima partida, sin excepcion.',
-        'opciones': [campeon_fijo], 'elegido': campeon_fijo,
-    })
-
-    # Hechizos de invocador forzados (par aleatorio).
-    par = random.choice(HECHIZOS_POSIBLES)
-    candidatos.append({
-        'tipo': 'hechizos',
-        'texto': f'Hechizos de invocador obligatorios: solo **{par[0]} + {par[1]}** en tu proxima partida.',
-        'opciones': [], 'elegido': None,
-    })
-
-    # Rol/linea forzada (especifica, no generica).
-    rol = random.choice(ROLES_POSIBLES)
-    candidatos.append({
-        'tipo': 'rol',
-        'texto': f'Debes jugar obligatoriamente de **{rol}** en tu proxima partida, sin importar tu rol habitual.',
-        'opciones': [], 'elegido': None,
-    })
-
-    # Baneo obligatorio de un campeon especifico (sorteado por el sistema, no a criterio de quien maldice).
-    campeon_baneo = random.choice(CAMPEONES_POOL)
-    candidatos.append({
-        'tipo': 'baneo',
-        'texto': f'Debes banear obligatoriamente a **{campeon_baneo}** en tu proxima partida (si no puedes banearlo, se cumple en la siguiente en la que puedas).',
-        'opciones': [], 'elegido': None,
-    })
-
-    # Retos variados que no dependen de campeon/hechizos/rol.
-    candidatos.append({
-        'tipo': 'reto',
-        'texto': random.choice(RETOS_POSIBLES),
-        'opciones': [], 'elegido': None,
-    })
-
-    return random.choice(candidatos)
+    texto = next(c[2] for c in CASTIGOS_OFICIALES if c[0] == tipo)
+    return {'tipo': tipo, 'texto': texto, 'opciones': [], 'elegido': None}
 
 
 # Sesiones de voz activas en memoria: {discord_id: datetime_de_ultimo_checkpoint}
@@ -498,7 +529,6 @@ def _cargar_registros_desde_sheets():
                 'motivo': f.get('motivo', ''),
                 'fecha': f.get('fecha', ''),
             })
-
         return registros
     except Exception as e:
         print(f'Error cargando registros desde Google Sheets: {e}')
@@ -668,6 +698,7 @@ def obtener_info_ranked(riot_id, region):
     if r2.status_code != 200:
         return None
     for entry in r2.json():
+
         if entry['queueType'] == 'RANKED_SOLO_5x5':
             return {
                 'puuid': puuid, 'tier': entry['tier'], 'rank': entry['rank'],
@@ -1132,10 +1163,16 @@ async def reglamento(interaction: discord.Interaction):
     embed.add_field(
         name='4. Escudos Azules y maldiciones (Blue Shell)',
         value=(f'Maximo {ESCUDOS_MAX_INVENTARIO} Escudos Azules en inventario (si ganas mas con el inventario lleno, se pierden). '
-               f'Con `/maldecir @jugador` gastas uno para lanzar un efecto aleatorio de entre una gran variedad de retos: '
-               f'campeon a elegir entre 3, campeon fijo obligatorio, hechizos de invocador forzados, rol/linea forzada, '
-               f'baneo obligatorio de un campeon especifico, y otros retos (vision, camara bloqueada, chat, compras, etc.), '
-               f'todos sorteados sobre la gama completa de campeones de LoL. Maximo {MALDICION_MAX_ACTIVAS} maldiciones activas por victima, duran {MALDICION_DURACION_HORAS}h.'),
+               f'Con `/maldecir @jugador` gastas uno para lanzar un castigo aleatorio: el mismo sistema y probabilidades '
+               f'del torneo modelo (ver campo 4b mas abajo). Maximo {MALDICION_MAX_ACTIVAS} maldiciones activas por '
+               f'victima a la vez, duran {MALDICION_DURACION_HORAS}h cada una.'),
+        inline=False)
+    embed.add_field(
+        name='4b. Los 10 castigos posibles (probabilidad real, tras descartar Reverse)',
+        value=('Sin tus 3 campeones mas jugados **17%** - Yuumi obligatorio **11%** - Campeon aleatorio obligatorio **11%** - '
+               'Sin Flash **11%** - Autofill/sin rol principal **11%** - Sin botas ni Pies Veloces **11%** - Hechizos '
+               'cambiados **6%** - Sin pociones ni pinks **6%** - Sin objetos miticos hasta min 15 **6%** - Clase de '
+               'campeon aleatoria (tirador/mago/asesino/luchador/tanque/soporte) **4%**.'),
         inline=False)
     embed.add_field(
         name='5. Cooldown de recepcion',
@@ -1204,11 +1241,12 @@ async def terminos(interaction: discord.Interaction):
         inline=False)
     embed.add_field(
         name='Maldicion (Castigo)',
-        value=('Efecto aleatorio que recibe un jugador cuando alguien usa `/maldecir` contra el: campeon a elegir '
-               'entre 3, campeon fijo obligatorio, hechizos de invocador forzados, rol/linea forzada, baneo '
-               'obligatorio de un campeon especifico, u otro reto (todo sorteado sobre la gama completa de '
-               'campeones). Es diferente de un "castigo manual" (`/castigar`), aunque ambos restan puntos o '
-               'imponen una condicion.'),
+        value=('Efecto aleatorio que recibe un jugador cuando alguien usa `/maldecir` contra el. Es uno de los 10 '
+               'castigos oficiales del torneo modelo (sin tus 3 campeones mas jugados, Yuumi obligatorio, campeon '
+               'aleatorio, sin Flash, Autofill, sin botas, hechizos cambiados, sin pociones/pinks, sin objetos '
+               'miticos hasta min 15, o clase de campeon aleatoria) o un Reverse. Usa `/reglamento` para ver el '
+               'listado completo con los porcentajes reales. Es diferente de un "castigo manual" (`/castigar`), '
+               'aunque ambos restan puntos o imponen una condicion.'),
         inline=False)
     embed.add_field(
         name='Pendiente / Cumplido',
@@ -1360,7 +1398,7 @@ async def ayuda(interaction: discord.Interaction):
                '`/iniciar_torneo` - Comienza oficialmente el torneo y reinicia el progreso de pruebas\n'
                '`/drop_diario` - Activa o desactiva el drop diario\n'
                '`/lanzar_reto` - Lanza el reto del drop diario\n'
-               '`/confirmar_reto` - Confirma quien cumplio el reto y le da el escudo\n'
+
                '`/reiniciar_registro` - PELIGRO: borra todo para reiniciar con cuentas nuevas'),
         inline=False
     )
@@ -1546,6 +1584,13 @@ async def maldecir(interaction: discord.Interaction, usuario: discord.Member):
             f'Intenta con otro objetivo o espera a que expiren (dura {MALDICION_DURACION_HORAS}h).')
         return
 
+    if efecto['tipo'] == 'sin_3_campeones':
+        top3 = await top_3_campeones_mas_jugados(destino_puuid, destino_data.get('region'))
+        if top3:
+            efecto['texto'] = f'No puedes jugar ninguno de tus 3 campeones mas jugados en tu proxima partida: **{", ".join(top3)}**.'
+        else:
+            efecto['texto'] = 'No puedes jugar tus 3 campeones mas jugados en tu proxima partida (revisa tu maestria de campeones en el cliente de LoL para saber cuales son).'
+
     ahora = str(datetime.datetime.now())
     caster_data['escudos'] = caster_data.get('escudos', 0) - 1
     caster_data['ultimo_escudo_uso'] = ahora
@@ -1576,13 +1621,12 @@ async def maldecir(interaction: discord.Interaction, usuario: discord.Member):
     embed.add_field(name='Lanzada por', value=f'<@{caster_id}>', inline=True)
     embed.add_field(name='Objetivo original', value=f'**{target_data["nombre"]}**', inline=True)
     embed.add_field(name='Objetivo final', value=f'**{destino_data["nombre"]}**' + (' (REVERSE)' if efecto['tipo'] == 'reverse' else ''), inline=True)
-    if efecto['tipo'] == 'campeon':
-        opciones_txt = ', '.join(efecto['opciones'])
-        embed.add_field(name='Efecto', value=f'{efecto["texto"]}\nOpciones: **{opciones_txt}**', inline=False)
-        embed.set_thumbnail(url=icono_campeon(efecto['opciones'][0]))
-    elif efecto['tipo'] == 'campeon_fijo':
+    if efecto['tipo'] == 'campeon_aleatorio':
         embed.add_field(name='Efecto', value=efecto['texto'], inline=False)
         embed.set_thumbnail(url=icono_campeon(efecto['elegido']))
+    elif efecto['tipo'] == 'yuumi':
+        embed.add_field(name='Efecto', value=efecto['texto'], inline=False)
+        embed.set_thumbnail(url=icono_campeon('Yuumi'))
     else:
         embed.add_field(name='Efecto', value=efecto['texto'], inline=False)
     cd_destino_txt = 'sin cooldown (Top 1)' if cooldown_recepcion_horas(pos_objetivo) == 0 else f'{cooldown_recepcion_horas(pos_objetivo)}h de cooldown de recepcion'
@@ -1755,6 +1799,7 @@ async def iniciar_torneo(interaction: discord.Interaction):
 async def castigar(interaction: discord.Interaction, usuario: discord.Member, puntos: int, motivo: str = ""):
     if not await requiere_directiva(interaction):
         return
+
     await interaction.response.defer()
     if puntos <= 0:
         await interaction.followup.send('Los puntos deben ser positivos.')
@@ -2023,7 +2068,6 @@ async def _procesar_partida_jugador(puuid, data, validos, headers):
 @tasks.loop(minutes=DROP_DIARIO_INTERVALO_MIN)
 async def revisar_partidas_recientes():
     db = cargar_db()
-
     validos = jugadores_validos(db)
     if not validos:
         return
@@ -2256,6 +2300,7 @@ PAGINA_HTML = """
   header::before {
     content: ""; position: absolute; inset: 0;
     background: radial-gradient(circle at 50% -10%, rgba(215,255,58,0.16), transparent 60%);
+
     pointer-events: none;
   }
   .hex-corner { position:absolute; width:52px; height:52px; opacity:0.55; z-index:1; }
@@ -2424,7 +2469,6 @@ PAGINA_HTML = """
 {% endfor %}
 </div>
 <header id="inicio">
-
   <svg class="hex-corner tl" viewBox="0 0 100 100"><polygon points="50,3 96,26 96,74 50,97 4,74 4,26" fill="none" stroke="#f5c518" stroke-width="3"/><polygon points="50,22 78,36 78,64 50,78 22,64 22,36" fill="none" stroke="#9b59b6" stroke-width="1.5"/></svg>
   <svg class="hex-corner tr" viewBox="0 0 100 100"><polygon points="50,3 96,26 96,74 50,97 4,74 4,26" fill="none" stroke="#f5c518" stroke-width="3"/><polygon points="50,22 78,36 78,64 50,78 22,64 22,36" fill="none" stroke="#9b59b6" stroke-width="1.5"/></svg>
   <div class="logo-fila">
