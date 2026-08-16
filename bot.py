@@ -1947,7 +1947,7 @@ def _kda_valor(kills, deaths, assists):
     return (kills + assists) / deaths
 
 
-async def _procesar_partida_jugador(puuid, data, validos, headers):
+def _procesar_partida_jugador(puuid, data, validos, headers):
     """Revisa la ultima partida ranked del jugador y otorga Escudos Azules automaticos segun corresponda.
     Devuelve una lista de textos de anuncio (puede estar vacia) y modifica 'data' in-place."""
     anuncios = []
@@ -2076,7 +2076,7 @@ async def revisar_partidas_recientes():
     for puuid, data in list(validos.items()):
         if data.get('estado') != 'aprobado':
             continue
-        anuncios = await _procesar_partida_jugador(puuid, data, validos, headers)
+        anuncios = await asyncio.to_thread(_procesar_partida_jugador, puuid, data, validos, headers)
         if anuncios:
             anuncios_totales.append(f"<@{data['discord_id']}> **{data.get('nombre', '?')}**: " + '; '.join(anuncios))
 
