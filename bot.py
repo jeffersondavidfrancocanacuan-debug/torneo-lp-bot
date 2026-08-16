@@ -677,7 +677,9 @@ def aegis_restante_horas(data):
 # ------------------- RIOT API -------------------
 
 def obtener_info_ranked(riot_id, region):
-    """riot_id con formato 'Nombre#TAG'. Usa account-v1 + league-v4 by-puuid."""
+    """riot_id con formato 'Nombre#TAG'. Usa account-v1 + league-v4 by-puuid.
+    Cualquier fallo de red/API (timeout, SSL, etc.) devuelve None en vez de propagar la excepcion,
+    para que un problema puntual con la API de Riot no tumbe toda la pagina/tabla."""
     plataforma = PLATFORM_MAP.get(region.lower())
     region_base = REGION_MAP.get(region.lower())
     if not plataforma or not region_base or '#' not in riot_id:
@@ -685,30 +687,34 @@ def obtener_info_ranked(riot_id, region):
     game_name, tag_line = riot_id.split('#', 1)
     headers = {'X-Riot-Token': RIOT_API_KEY}
 
-    url = f'https://{region_base}.api.riotgames.com/riot/account/v1/accounts/by-riot-id/{game_name}/{tag_line}'
-    r = requests.get(url, headers=headers)
-    if r.status_code != 200:
-        return None
-    cuenta = r.json()
-    puuid = cuenta['puuid']
-    nombre_completo = f"{cuenta['gameName']}#{cuenta['tagLine']}"
+    try:
+        url = f'https://{region_base}.api.riotgames.com/riot/account/v1/accounts/by-riot-id/{game_name}/{tag_line}'
+        r = requests.get(url, headers=headers, timeout=8)
+        if r.status_code != 200:
+            return None
+        cuenta = r.json()
+        puuid = cuenta['puuid']
+        nombre_completo = f"{cuenta['gameName']}#{cuenta['tagLine']}"
 
-    url2 = f'https://{plataforma}.api.riotgames.com/lol/league/v4/entries/by-puuid/{puuid}'
-    r2 = requests.get(url2, headers=headers)
-    if r2.status_code != 200:
+        url2 = f'https://{plataforma}.api.riotgames.com/lol/league/v4/entries/by-puuid/{puuid}'
+        r2 = requests.get(url2, headers=headers, timeout=8)
+        if r2.status_code != 200:
+            return None
+        for entry in r2.json():
+            if entry['queueType'] == 'RANKED_SOLO_5x5':
+                return {
+                    'puuid': puuid, 'tier': entry['tier'], 'rank': entry['rank'],
+                    'lp': entry['leaguePoints'], 'wins': entry['wins'], 'losses': entry['losses'],
+                    'nombre': nombre_completo
+                }
+        return {
+            'puuid': puuid, 'tier': 'UNRANKED', 'rank': '', 'lp': 0, 'wins': 0, 'losses': 0,
+            'nombre': nombre_completo
+        }
+    except Exception as e:
+        print(f'Error obteniendo info ranked de {riot_id}: {e}')
         return None
-    for entry in r2.json():
 
-        if entry['queueType'] == 'RANKED_SOLO_5x5':
-            return {
-                'puuid': puuid, 'tier': entry['tier'], 'rank': entry['rank'],
-                'lp': entry['leaguePoints'], 'wins': entry['wins'], 'losses': entry['losses'],
-                'nombre': nombre_completo
-            }
-    return {
-        'puuid': puuid, 'tier': 'UNRANKED', 'rank': '', 'lp': 0, 'wins': 0, 'losses': 0,
-        'nombre': nombre_completo
-    }
 
 
 def esta_en_partida_activa(puuid, plataforma):
