@@ -1159,8 +1159,8 @@ async def perfil(interaction: discord.Interaction):
     if objetivo is None:
         await interaction.followup.send('No estas registrado. Usa `/registrar` primero.')
         return
-        posicion = None
-        if not objetivo['elo']:
+    posicion = None
+    if not objetivo['elo']:
         posicion_txt = 'Pendiente de clasificacion manual por la Directiva (High/Low Elo)'
     elif objetivo['estado'] == 'pendiente':
         posicion_txt = 'En revision por la directiva (no aparece en la tabla aun)'
