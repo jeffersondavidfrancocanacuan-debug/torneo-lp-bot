@@ -330,9 +330,9 @@ _gs_client = None
 _gs_spreadsheet = None
 
 _cache_lock = Lock()
-_db_cache = None
+_db_cache = None; _db_cargado_ok = False
 _db_dirty = False
-_registros_cache = None
+_registros_cache = None; _registros_cargados_ok = False
 _registros_dirty = False
 
 
@@ -456,7 +456,7 @@ def _cargar_db_desde_sheets():
         return db
     except Exception as e:
         print(f'Error cargando DB desde Google Sheets: {e}')
-        return {}
+        raise
 
 
 def _guardar_db_en_sheets(db):
@@ -489,10 +489,10 @@ def _guardar_db_en_sheets(db):
 def cargar_db():
     """Devuelve la base de datos desde la cache en memoria (instantaneo, sin red). Solo golpea
     la API de Sheets la primera vez que se llama, al arrancar el bot."""
-    global _db_cache
+    global _db_cache, _db_cargado_ok
     with _cache_lock:
         if _db_cache is None:
-            _db_cache = _cargar_db_desde_sheets()
+            _db_cache = _cargar_db_desde_sheets(); _db_cargado_ok = True
         return _db_cache
 
 
@@ -515,7 +515,7 @@ def flush_db_sincrono():
     global _db_dirty
     with _cache_lock:
         db_actual = _db_cache
-    if db_actual is None:
+    if db_actual is None or not _db_cargado_ok:
         return
     if _guardar_db_en_sheets(db_actual):
         with _cache_lock:
@@ -541,7 +541,7 @@ def _cargar_registros_desde_sheets():
         return registros
     except Exception as e:
         print(f'Error cargando registros desde Google Sheets: {e}')
-        return []
+        raise
 
 
 def _guardar_registros_en_sheets(registros):
@@ -559,10 +559,10 @@ def _guardar_registros_en_sheets(registros):
 
 
 def cargar_registros():
-    global _registros_cache
+    global _registros_cache, _registros_cargados_ok
     with _cache_lock:
         if _registros_cache is None:
-            _registros_cache = _cargar_registros_desde_sheets()
+            _registros_cache = _cargar_registros_desde_sheets(); _registros_cargados_ok = True
         return _registros_cache
 
 
@@ -577,7 +577,7 @@ def flush_registros_sincrono():
     global _registros_dirty
     with _cache_lock:
         actuales = _registros_cache
-    if actuales is None:
+    if actuales is None or not _registros_cargados_ok:
         return
     if _guardar_registros_en_sheets(actuales):
         with _cache_lock:
