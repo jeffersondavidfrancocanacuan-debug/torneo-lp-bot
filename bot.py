@@ -1544,8 +1544,8 @@ async def escudos(interaction: discord.Interaction):
             ) or 'Ninguna'
             pos = posicion_de_jugador(db, puuid)
             cd_horas = cooldown_recepcion_horas(pos)
-        cd_txt = f'{cd_horas}h'
-        max_activas = maldicion_max_activas_por_posicion(pos)
+            cd_txt = f'{cd_horas}h'
+            max_activas = maldicion_max_activas_por_posicion(pos)
             restante_recepcion = 0
             if data.get('ultima_maldicion_recibida'):
                 try:
