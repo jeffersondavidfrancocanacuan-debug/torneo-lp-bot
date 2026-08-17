@@ -1642,13 +1642,13 @@ async def maldecir(interaction: discord.Interaction, usuario: discord.Member):
         guardar_db(db)
         return
 
-        pos_destino = posicion_de_jugador(db, destino_puuid)
-        max_activas_destino = maldicion_max_activas_por_posicion(pos_destino)
-        if len(maldiciones_activas_de(destino_data)) >= max_activas_destino:
-            await interaction.followup.send(
-                f'**{destino_data["nombre"]}** ya tiene el maximo de {max_activas_destino} maldiciones activas ahora mismo. '
-                f'Intenta con otro objetivo o espera a que expiren (dura {MALDICION_DURACION_HORAS}h).')
-            return
+    pos_destino = posicion_de_jugador(db, destino_puuid)
+    max_activas_destino = maldicion_max_activas_por_posicion(pos_destino)
+    if len(maldiciones_activas_de(destino_data)) >= max_activas_destino:
+        await interaction.followup.send(
+            f'**{destino_data["nombre"]}** ya tiene el maximo de {max_activas_destino} maldiciones activas ahora mismo. '
+            f'Intenta con otro objetivo o espera a que expiren (dura {MALDICION_DURACION_HORAS}h).')
+        return
 
     if efecto['tipo'] == 'sin_3_campeones':
         top3 = await top_3_campeones_mas_jugados(destino_puuid, destino_data.get('region'))
