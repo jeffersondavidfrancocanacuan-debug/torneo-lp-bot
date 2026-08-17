@@ -16,7 +16,7 @@ from flask import Flask, jsonify, render_template_string
 # ================= CONFIGURACIÓN =================
 DISCORD_TOKEN = os.environ.get('DISCORD_TOKEN')
 RIOT_API_KEY = os.environ.get('RIOT_API_KEY')
-CANAL_CLASIFICACION_ID = int(os.environ.get('CANAL_CLASIFICACION_ID', '0')
+CANAL_CLASIFICACION_ID = int(os.environ.get('CANAL_CLASIFICACION_ID', '0'))
 CANAL_MALDICIONES_ID = int(os.environ.get('CANAL_MALDICIONES_ID', '0'))
 DURACION_TORNEO = int(os.environ.get('DURACION_TORNEO', '30'))
 JUEGOS_MINIMOS_CUENTA = int(os.environ.get('JUEGOS_MINIMOS_CUENTA', '15'))
