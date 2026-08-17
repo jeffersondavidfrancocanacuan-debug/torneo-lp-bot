@@ -1901,13 +1901,13 @@ async def castigar(interaction: discord.Interaction, usuario: discord.Member, pu
             if canal_destino:
                 await canal_destino.send(texto_castigo)
                 if canal_destino.id != interaction.channel_id:
-            await interaction.followup.send(f'Castigo aplicado. Revisa {canal_destino.mention} para el detalle.')
-        else:
-            await interaction.followup.send(texto_castigo)
-        await enviar_dm_seguro(
-            str(usuario.id),
-            f'Recibiste un castigo en SoloQ Challenge: -{puntos} puntos.\nMotivo: {motivo}'
-        )
+                    await interaction.followup.send(f'Castigo aplicado. Revisa {canal_destino.mention} para el detalle.')
+            else:
+                await interaction.followup.send(texto_castigo)
+            await enviar_dm_seguro(
+                str(usuario.id),
+                f'Recibiste un castigo en SoloQ Challenge: -{puntos} puntos.\nMotivo: {motivo}'
+            )
             return
     await interaction.followup.send('Usuario no encontrado en el torneo.')
 
