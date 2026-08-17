@@ -1709,28 +1709,28 @@ async def maldecir(interaction: discord.Interaction, usuario: discord.Member):
         embed.add_field(name='Efecto', value=efecto['texto'], inline=False)
         cd_destino_txt = 'sin cooldown de recepcion'
         embed.set_footer(text=f'Dura {MALDICION_DURACION_HORAS}h - Maximo {max_activas_destino} activas por jugador - El objetivo original tenia {cd_destino_txt}')
-        canal_destino = canal_maldiciones()
+    canal_destino = canal_maldiciones()
+    if canal_destino:
+        await canal_destino.send(
+            content=f'<@{destino_data["discord_id"]}> te lanzaron una maldicion Blue Shell!',
+            embed=embed)
+        if canal_destino.id != interaction.channel_id:
+            await interaction.followup.send(f'Maldicion lanzada. Revisa {canal_destino.mention} para el detalle.')
+    else:
+        await interaction.followup.send(
+            content=f'<@{destino_data["discord_id"]}> te lanzaron una maldicion Blue Shell!',
+            embed=embed)
+    await enviar_dm_seguro(
+        destino_data['discord_id'],
+        f'Te lanzaron una maldicion Blue Shell en SoloQ Challenge: {efecto["texto"]}\nDura {MALDICION_DURACION_HORAS}h. Revisa el canal de maldiciones para mas detalles.'
+    )
+    if aegis_otorgado:
+        aegis_msg = (f'<@{destino_data["discord_id"]}> llenaste tu cupo de {max_activas_destino} maldiciones activas: '
+                     f'se activo tu **Aegis** (proteccion) por {AEGIS_DURACION_HORAS}h. Nadie podra maldecirte mientras dure.')
         if canal_destino:
-            await canal_destino.send(
-                content=f'<@{destino_data["discord_id"]}> te lanzaron una maldicion Blue Shell!',
-                embed=embed)
-            if canal_destino.id != interaction.channel_id:
-                await interaction.followup.send(f'Maldicion lanzada. Revisa {canal_destino.mention} para el detalle.')
+            await canal_destino.send(aegis_msg)
         else:
-            await interaction.followup.send(
-                content=f'<@{destino_data["discord_id"]}> te lanzaron una maldicion Blue Shell!',
-                embed=embed)
-        await enviar_dm_seguro(
-            destino_data['discord_id'],
-            f'Te lanzaron una maldicion Blue Shell en SoloQ Challenge: {efecto["texto"]}\nDura {MALDICION_DURACION_HORAS}h. Revisa el canal de maldiciones para mas detalles.'
-        )
-        if aegis_otorgado:
-            aegis_msg = (f'<@{destino_data["discord_id"]}> llenaste tu cupo de {max_activas_destino} maldiciones activas: '
-                         f'se activo tu **Aegis** (proteccion) por {AEGIS_DURACION_HORAS}h. Nadie podra maldecirte mientras dure.')
-            if canal_destino:
-                await canal_destino.send(aegis_msg)
-            else:
-                await interaction.followup.send(aegis_msg)
+            await interaction.followup.send(aegis_msg)
 
 @tree.command(name='elegir_campeon', description='Elige tu campeon si te toco una maldicion de campeon aleatorio')
 @app_commands.describe(campeon='El campeon que eliges entre las opciones dadas')
