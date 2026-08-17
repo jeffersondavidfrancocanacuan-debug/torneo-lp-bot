@@ -515,7 +515,7 @@ def flush_db_sincrono():
     global _db_dirty
     with _cache_lock:
         db_actual = _db_cache
-    if db_actual is None or not _db_cargado_ok:
+    if db_actual is None or not _db_cargado_ok or not _db_dirty:
         return
     if _guardar_db_en_sheets(db_actual):
         with _cache_lock:
@@ -577,7 +577,7 @@ def flush_registros_sincrono():
     global _registros_dirty
     with _cache_lock:
         actuales = _registros_cache
-    if actuales is None or not _registros_cargados_ok:
+    if actuales is None or not _registros_cargados_ok or not _registros_dirty:
         return
     if _guardar_registros_en_sheets(actuales):
         with _cache_lock:
