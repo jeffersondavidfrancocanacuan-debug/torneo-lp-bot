@@ -13,6 +13,8 @@ import time
 from threading import Thread, Lock
 from flask import Flask, jsonify, render_template_string
 
+HTTP_SESSION = requests.Session()  # sesion HTTP reutilizable (keep-alive): acelera las llamadas a la API de Riot
+
 # ================= CONFIGURACIÓN =================
 DISCORD_TOKEN = os.environ.get('DISCORD_TOKEN')
 RIOT_API_KEY = os.environ.get('RIOT_API_KEY')
@@ -95,7 +97,7 @@ ALERTA_INCUMPLIMIENTO_HORAS = 24    # si un castigo lleva mas de esto sin cumpli
 def cooldown_recepcion_horas(posicion):
         """Cooldown (horas) antes de poder volver a maldecir a alguien: fijo para todos los puestos,
         incluido el puesto 1 (ya no tiene excepcion de 'sin cooldown')."""
-        return COOLDOWN_RECEPCION_HORAS
+        return 0  # cooldown eliminado: los castigos se acumulan hasta el maximo por puesto
 
 
 def maldicion_max_activas_por_posicion(posicion):
@@ -189,7 +191,7 @@ def _cargar_mapa_campeones():
     if _CAMPEON_ID_A_NOMBRE:
         return
     try:
-        r = requests.get(f'https://ddragon.leagueoflegends.com/cdn/{DDRAGON_VERSION}/data/en_US/champion.json', timeout=8)
+        r = HTTP_SESSION.get(f'https://ddragon.leagueoflegends.com/cdn/{DDRAGON_VERSION}/data/en_US/champion.json', timeout=8)
         data = r.json().get('data', {})
         for info in data.values():
             _CAMPEON_ID_A_NOMBRE[int(info['key'])] = info['name']
@@ -207,7 +209,7 @@ async def top_3_campeones_mas_jugados(puuid, region):
     try:
         _cargar_mapa_campeones()
         url = f'https://{plataforma}.api.riotgames.com/lol/champion-mastery/v4/champion-masteries/by-puuid/{puuid}/top?count=3'
-        r = requests.get(url, headers={'X-Riot-Token': RIOT_API_KEY}, timeout=8)
+        r = HTTP_SESSION.get(url, headers={'X-Riot-Token': RIOT_API_KEY}, timeout=8)
         if r.status_code != 200:
             return None
         nombres = []
@@ -701,7 +703,7 @@ def obtener_info_ranked(riot_id, region):
 
     try:
         url = f'https://{region_base}.api.riotgames.com/riot/account/v1/accounts/by-riot-id/{game_name}/{tag_line}'
-        r = requests.get(url, headers=headers, timeout=8)
+        r = HTTP_SESSION.get(url, headers=headers, timeout=8)
         if r.status_code != 200:
             return None
         cuenta = r.json()
@@ -709,7 +711,7 @@ def obtener_info_ranked(riot_id, region):
         nombre_completo = f"{cuenta['gameName']}#{cuenta['tagLine']}"
 
         url2 = f'https://{plataforma}.api.riotgames.com/lol/league/v4/entries/by-puuid/{puuid}'
-        r2 = requests.get(url2, headers=headers, timeout=8)
+        r2 = HTTP_SESSION.get(url2, headers=headers, timeout=8)
         if r2.status_code != 200:
             return None
         for entry in r2.json():
@@ -735,7 +737,7 @@ def esta_en_partida_activa(puuid, plataforma):
     try:
         headers = {'X-Riot-Token': RIOT_API_KEY}
         url = f'https://{plataforma}.api.riotgames.com/lol/spectator/v5/active-games/by-summoner/{puuid}'
-        r = requests.get(url, headers=headers, timeout=6)
+        r = HTTP_SESSION.get(url, headers=headers, timeout=6)
         return r.status_code == 200
     except Exception:
         return False
@@ -750,12 +752,12 @@ def en_ventana_postpartida(puuid, region_base):
         # Se piden varias partidas recientes (no solo la ultima) porque la ultima jugada puede ser
         # una normal/ARAM/personalizada posterior a la ranked; se busca la ranked mas reciente.
         url = f'https://{region_base}.api.riotgames.com/lol/match/v5/matches/by-puuid/{puuid}/ids?start=0&count=5'
-        r = requests.get(url, headers=headers, timeout=6)
+        r = HTTP_SESSION.get(url, headers=headers, timeout=6)
         if r.status_code != 200 or not r.json():
             return False
         for match_id in r.json():
             url2 = f'https://{region_base}.api.riotgames.com/lol/match/v5/matches/{match_id}'
-            r2 = requests.get(url2, headers=headers, timeout=6)
+            r2 = HTTP_SESSION.get(url2, headers=headers, timeout=6)
             if r2.status_code != 200:
                 continue
             info = r2.json()['info']
@@ -1069,7 +1071,7 @@ async def registrar(interaction: discord.Interaction, nombre: str, elo_previo: s
         await interaction.followup.send('Usa tu Riot ID completo con formato **Nombre#TAG** (ej: Faker#LAN1).')
         return
     region = 'lan'
-    info = obtener_info_ranked(nombre, region)
+    info = await asyncio.to_thread(obtener_info_ranked, nombre, region)
     if info is None:
         await interaction.followup.send('No se encontro la cuenta. Verifica el Riot ID exacto (Nombre#TAG) y que sea de LAN.')
         return
@@ -1125,7 +1127,7 @@ async def progreso(interaction: discord.Interaction):
     db = cargar_db()
     for puuid, data in jugadores_validos(db).items():
         if data['discord_id'] == user_id:
-            info = obtener_info_ranked(data['nombre'], data['region'])
+            info = await asyncio.to_thread(obtener_info_ranked, data['nombre'], data['region'])
             if info is None:
                 await interaction.followup.send('No se pudo obtener tu informacion. Intenta mas tarde.')
                 return
@@ -1201,7 +1203,7 @@ async def perfil(interaction: discord.Interaction):
         embed.add_field(name='Elo previo declarado', value=objetivo['elo_previo'], inline=True)
     activas = maldiciones_activas_de(data)
     max_activas_perfil = maldicion_max_activas_por_posicion(posicion)
-    malds_txt = '\n'.join(f'- {m["texto"]}' + (' (cumplido)' if m.get('cumplido') else ' (pendiente)') for m in activas) or 'Ninguna'
+    malds_txt = '\n'.join(f'- {m["texto"]}' + (f' | lanzada por <@{m["de"]}>' if m.get('de') else '') + (' (cumplido)' if m.get('cumplido') else ' (pendiente)') for m in activas) or 'Ninguna'
     embed.add_field(name=f'Maldiciones activas ({len(activas)}/{max_activas_perfil})', value=malds_txt, inline=False)
     embed.add_field(name='Logros', value=logros_txt, inline=False)
     await interaction.followup.send(embed=embed)
@@ -1247,7 +1249,7 @@ async def reglamento(interaction: discord.Interaction):
         inline=False)
     embed.add_field(
         name='5. Cooldown de recepcion',
-        value=f'{COOLDOWN_RECEPCION_HORAS}h fijas para todos los puestos (incluido el Puesto 1). Se aplica sobre quien RECIBE la maldicion.',
+        value=f'Eliminado: las maldiciones se acumulan sin espera hasta el maximo del puesto. Al llenarse el cupo se activa un Aegis de {AEGIS_DURACION_HORAS}h.',
         inline=False)
     embed.add_field(
         name='6. Reverse',
@@ -1275,7 +1277,7 @@ async def reglamento(interaction: discord.Interaction):
         inline=False)
     embed.add_field(
         name='10. Aegis (proteccion)',
-        value=(f'Si un jugador acumula {CASTIGOS_PENDIENTES_PARA_AEGIS} maldiciones activas SIN cumplir, se activa '
+        value=(f'Si un jugador llena su maximo de maldiciones activas segun su puesto (9/6/3), se activa '
                f'automaticamente un Aegis de {AEGIS_DURACION_HORAS}h que lo protege de nuevas maldiciones.'),
         inline=False)
     embed.add_field(
@@ -1328,7 +1330,7 @@ async def terminos(interaction: discord.Interaction):
         inline=False)
     embed.add_field(
         name='Cooldown de recepcion',
-        value=f'Tiempo que debe pasar antes de que alguien pueda volver a maldecir a un jugador especifico: {COOLDOWN_RECEPCION_HORAS}h fijas, igual para todos los puestos.',
+        value=f'Ya no existe: se pueden recibir maldiciones seguidas hasta llenar el maximo del puesto; al llenarse se activa el Aegis de {AEGIS_DURACION_HORAS}h.',
         inline=False)
     embed.add_field(
         name='Reverse',
@@ -1337,7 +1339,7 @@ async def terminos(interaction: discord.Interaction):
     embed.add_field(
         name='Aegis (proteccion)',
         value=(f'Escudo TEMPORAL distinto del Escudo Azul: se activa automaticamente por {AEGIS_DURACION_HORAS}h cuando '
-               f'un jugador acumula {CASTIGOS_PENDIENTES_PARA_AEGIS} maldiciones activas sin cumplir. Mientras dura, nadie '
+               f'un jugador llena su maximo de maldiciones activas segun su puesto (9/6/3). Mientras dura, nadie '
                f'puede maldecirlo. No se gasta ni se otorga manualmente, es automatico.'),
         inline=False)
     embed.add_field(
@@ -1486,7 +1488,7 @@ async def ayuda(interaction: discord.Interaction):
                f'KDA perfecto, victorias largas, etc.) o si la Directiva las otorga, maximo {ESCUDOS_MAX_INVENTARIO} en inventario. '
                f'Usa `/maldecir` para gastar uno. Maximo de maldiciones activas por victima segun su puesto (Puesto 1: '
                f'{MALDICION_MAX_ACTIVAS_TOP1}, Puesto 2: {MALDICION_MAX_ACTIVAS_TOP2}, resto: {MALDICION_MAX_ACTIVAS}). '
-               f'Cooldown de recepcion fijo de {COOLDOWN_RECEPCION_HORAS}h para todos. Si acumulas '
+               f'Sin cooldown de recepcion: los castigos se acumulan hasta el maximo del puesto y al llenarse se activa el Aegis. '
                f'Usa `/terminos` o `/reglamento` para el detalle completo.'),
         inline=False
     )
@@ -1634,7 +1636,7 @@ async def maldecir(interaction: discord.Interaction, usuario: discord.Member):
             pass
 
     # Restricciones de lanzamiento: no en cola/partida/postpartida (segun API publica: partida en vivo o postpartida).
-    motivo_bloqueo = motivo_bloqueo_por_partida(caster_puuid, caster_data)
+    motivo_bloqueo = await asyncio.to_thread(motivo_bloqueo_por_partida, caster_puuid, caster_data)
     if motivo_bloqueo:
         await interaction.followup.send(f'No puedes lanzar una maldicion ahora mismo: {motivo_bloqueo}.')
         return
@@ -1679,7 +1681,7 @@ async def maldecir(interaction: discord.Interaction, usuario: discord.Member):
     # Aegis: si el destino acumula demasiados castigos activos sin cumplir, se protege temporalmente.
     pendientes_destino = castigos_pendientes_de(destino_data)
     aegis_otorgado = False
-    if len(pendientes_destino) >= CASTIGOS_PENDIENTES_PARA_AEGIS:
+    if len(maldiciones_activas_de(destino_data)) >= max_activas_destino:
         destino_data['escudo_hasta'] = str(datetime.datetime.now() + datetime.timedelta(hours=AEGIS_DURACION_HORAS))
         aegis_otorgado = True
 
@@ -1705,7 +1707,7 @@ async def maldecir(interaction: discord.Interaction, usuario: discord.Member):
         embed.set_thumbnail(url=icono_campeon('Yuumi'))
     else:
         embed.add_field(name='Efecto', value=efecto['texto'], inline=False)
-        cd_destino_txt = f'{cooldown_recepcion_horas(pos_objetivo)}h de cooldown de recepcion'
+        cd_destino_txt = 'sin cooldown de recepcion'
         embed.set_footer(text=f'Dura {MALDICION_DURACION_HORAS}h - Maximo {max_activas_destino} activas por jugador - El objetivo original tenia {cd_destino_txt}')
         canal_destino = canal_maldiciones()
         if canal_destino:
@@ -1723,7 +1725,7 @@ async def maldecir(interaction: discord.Interaction, usuario: discord.Member):
             f'Te lanzaron una maldicion Blue Shell en SoloQ Challenge: {efecto["texto"]}\nDura {MALDICION_DURACION_HORAS}h. Revisa el canal de maldiciones para mas detalles.'
         )
         if aegis_otorgado:
-            aegis_msg = (f'<@{destino_data["discord_id"]}> acumulaste {CASTIGOS_PENDIENTES_PARA_AEGIS} castigos (maldiciones) sin cumplir: '
+            aegis_msg = (f'<@{destino_data["discord_id"]}> llenaste tu cupo de {max_activas_destino} maldiciones activas: '
                          f'se activo tu **Aegis** (proteccion) por {AEGIS_DURACION_HORAS}h. Nadie podra maldecirte mientras dure.')
             if canal_destino:
                 await canal_destino.send(aegis_msg)
@@ -1861,7 +1863,7 @@ async def iniciar_torneo(interaction: discord.Interaction):
     for puuid, data in jugadores_validos(db).items():
         if data.get('estado') != 'aprobado':
             continue
-        info = obtener_info_ranked(data['nombre'], data['region'])
+        info = await asyncio.to_thread(obtener_info_ranked, data['nombre'], data['region'])
         if info is None:
             continue
         data['lp_inicial'] = info['lp']
@@ -2055,7 +2057,7 @@ def _procesar_partida_jugador(puuid, data, validos, headers):
         return anuncios
     try:
         url = f'https://{region_base}.api.riotgames.com/lol/match/v5/matches/by-puuid/{puuid}/ids?count=1'
-        r = requests.get(url, headers=headers, timeout=8)
+        r = HTTP_SESSION.get(url, headers=headers, timeout=8)
         if r.status_code != 200 or not r.json():
             return anuncios
         match_id = r.json()[0]
@@ -2063,7 +2065,7 @@ def _procesar_partida_jugador(puuid, data, validos, headers):
             return anuncios
 
         url2 = f'https://{region_base}.api.riotgames.com/lol/match/v5/matches/{match_id}'
-        r2 = requests.get(url2, headers=headers, timeout=8)
+        r2 = HTTP_SESSION.get(url2, headers=headers, timeout=8)
         if r2.status_code != 200:
             return anuncios
         match = r2.json()
@@ -2136,7 +2138,7 @@ def _procesar_partida_jugador(puuid, data, validos, headers):
                 pid_to_team = {p['participantId']: p['teamId'] for p in info_match['participants']}
                 mi_team = participante['teamId']
                 url3 = f'https://{region_base}.api.riotgames.com/lol/match/v5/matches/{match_id}/timeline'
-                r3 = requests.get(url3, headers=headers, timeout=8)
+                r3 = HTTP_SESSION.get(url3, headers=headers, timeout=8)
                 if r3.status_code == 200:
                     frames = r3.json()['info']['frames']
                     idx = min(15, len(frames) - 1)
