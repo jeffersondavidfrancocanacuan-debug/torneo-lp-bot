@@ -16,7 +16,8 @@ from flask import Flask, jsonify, render_template_string
 # ================= CONFIGURACIÓN =================
 DISCORD_TOKEN = os.environ.get('DISCORD_TOKEN')
 RIOT_API_KEY = os.environ.get('RIOT_API_KEY')
-CANAL_CLASIFICACION_ID = int(os.environ.get('CANAL_CLASIFICACION_ID', '0'))
+CANAL_CLASIFICACION_ID = int(os.environ.get('CANAL_CLASIFICACION_ID', '0')
+CANAL_MALDICIONES_ID = int(os.environ.get('CANAL_MALDICIONES_ID', '0'))
 DURACION_TORNEO = int(os.environ.get('DURACION_TORNEO', '30'))
 JUEGOS_MINIMOS_CUENTA = int(os.environ.get('JUEGOS_MINIMOS_CUENTA', '15'))
 VOZ_MINIMA_MINUTOS = float(os.environ.get('VOZ_MINIMA_MINUTOS', '1'))
@@ -77,7 +78,9 @@ LOGROS = {
 }
 
 # ------------------- ESCUDOS AZULES (maldiciones estilo Blue Shell) -------------------
-MALDICION_MAX_ACTIVAS = 3
+MALDICION_MAX_ACTIVAS = 3           # limite base (puesto 3 en adelante) de maldiciones activas por victima
+MALDICION_MAX_ACTIVAS_TOP1 = 9      # limite especial para quien esta en el puesto 1
+MALDICION_MAX_ACTIVAS_TOP2 = 6      # limite especial para quien esta en el puesto 2
 MALDICION_DURACION_HORAS = 24
 ESCUDOS_MAX_INVENTARIO = 3          # maximo de Escudos Azules que un jugador puede acumular
 CASTIGOS_PENDIENTES_PARA_AEGIS = 3  # castigos SIN cumplir recibidos que activan el Aegis
@@ -85,18 +88,24 @@ AEGIS_DURACION_HORAS = 24           # proteccion temporal tras activar el Aegis
 POSTPARTIDA_GRACIA_MINUTOS = 10     # minutos tras terminar una partida en los que no se puede lanzar
 TORNEO_BLOQUEO_FINAL_HORAS = 48     # ultimas horas del torneo en las que el sistema Blue Shell se desactiva
 DROP_DIARIO_INTERVALO_MIN = 10      # frecuencia de revision de partidas para escudos automaticos
+COOLDOWN_RECEPCION_HORAS = 12       # cooldown fijo (para todos los puestos) antes de poder volver a maldecir a alguien
+ALERTA_INCUMPLIMIENTO_HORAS = 24    # si un castigo lleva mas de esto sin cumplirse, se avisa a la Directiva y al jugador
 
 
 def cooldown_recepcion_horas(posicion):
-    """Cooldown (horas) antes de poder volver a maldecir a alguien, segun su posicion en la tabla.
-    Top1: sin cooldown. Top2: 4h. Top3-5: 6h. Resto (o sin clasificar): 12h."""
-    if posicion == 1:
-        return 0
-    if posicion == 2:
-        return 4
-    if posicion in (3, 4, 5):
-        return 6
-    return 12
+        """Cooldown (horas) antes de poder volver a maldecir a alguien: fijo para todos los puestos,
+        incluido el puesto 1 (ya no tiene excepcion de 'sin cooldown')."""
+        return COOLDOWN_RECEPCION_HORAS
+
+
+def maldicion_max_activas_por_posicion(posicion):
+        """Maximo de maldiciones activas que puede acumular un jugador a la vez, segun su puesto en la tabla:
+        Puesto 1: hasta 9. Puesto 2: hasta 6. Resto (o sin clasificar): el limite base."""
+        if posicion == 1:
+            return MALDICION_MAX_ACTIVAS_TOP1
+        if posicion == 2:
+            return MALDICION_MAX_ACTIVAS_TOP2
+        return MALDICION_MAX_ACTIVAS
 
 
 def probabilidad_reverse(posicion):
@@ -777,8 +786,32 @@ def motivo_bloqueo_por_partida(puuid, data):
             return f'termino una partida hace menos de {POSTPARTIDA_GRACIA_MINUTOS} minutos (se esta procesando el resultado)'
     except Exception:
         return None
+
+def canal_maldiciones():    
+    """Canal dedicado donde se publican los resultados de /maldecir y /castigar, para no ensuciar
+    otros canales del servidor. Si no esta configurado (CANAL_MALDICIONES_ID), usa el canal de
+    clasificacion como respaldo."""
+    if CANAL_MALDICIONES_ID != 0:
+        canal = client.get_channel(CANAL_MALDICIONES_ID)
+        if canal:
+            return canal
+    if CANAL_CLASIFICACION_ID != 0:
+        return client.get_channel(CANAL_CLASIFICACION_ID)
     return None
 
+async def enviar_dm_seguro(discord_id, texto):
+    """Intenta enviar un mensaje directo (DM) a un jugador. Si tiene los DMs cerrados o ya no esta
+    en el servidor, falla en silencio: nunca debe romper el flujo del comando que lo llama."""
+    try:
+        guild = client.get_guild(int(DISCORD_GUILD_ID))
+        if not guild:
+            return
+        member = guild.get_member(int(discord_id))
+        if not member:
+            return
+        await member.send(texto)
+    except Exception:
+        pass
 
 def torneo_en_ultimas_48h(db):
     """True si quedan menos de TORNEO_BLOQUEO_FINAL_HORAS para el cierre del torneo (Blue Shell desactivado)."""
@@ -878,7 +911,8 @@ def calcular_tabla(db):
         escalado_inicial = valor_escalado(data.get('tier_inicial', info['tier']), data.get('rank_inicial', ''), data['lp_inicial'])
         escalado_actual = valor_escalado(info['tier'], info['rank'], info['lp'])
         progreso_escalado = escalado_actual - escalado_inicial
-        total = progreso_escalado + data.get('bonus_total', 0) - data.get('castigos_total', 0)
+        # El orden de la tabla se basa en el rango/LP actual (escalado_actual), no en el progreso.
+        total = escalado_actual + data.get('bonus_total', 0) - data.get('castigos_total', 0)
         tiempo_voz = round(data.get('tiempo_voz_min', 0), 1)
         pendientes_castigo = castigos_pendientes_de(data)
         wins = info.get('wins', 0)
@@ -1125,8 +1159,8 @@ async def perfil(interaction: discord.Interaction):
     if objetivo is None:
         await interaction.followup.send('No estas registrado. Usa `/registrar` primero.')
         return
-
-    if not objetivo['elo']:
+        posicion = None
+        if not objetivo['elo']:
         posicion_txt = 'Pendiente de clasificacion manual por la Directiva (High/Low Elo)'
     elif objetivo['estado'] == 'pendiente':
         posicion_txt = 'En revision por la directiva (no aparece en la tabla aun)'
@@ -1156,8 +1190,9 @@ async def perfil(interaction: discord.Interaction):
     if objetivo.get('elo_previo'):
         embed.add_field(name='Elo previo declarado', value=objetivo['elo_previo'], inline=True)
     activas = maldiciones_activas_de(data)
+    max_activas_perfil = maldicion_max_activas_por_posicion(posicion)
     malds_txt = '\n'.join(f'- {m["texto"]}' + (' (cumplido)' if m.get('cumplido') else ' (pendiente)') for m in activas) or 'Ninguna'
-    embed.add_field(name=f'Maldiciones activas ({len(activas)}/{MALDICION_MAX_ACTIVAS})', value=malds_txt, inline=False)
+    embed.add_field(name=f'Maldiciones activas ({len(activas)}/{max_activas_perfil})', value=malds_txt, inline=False)
     embed.add_field(name='Logros', value=logros_txt, inline=False)
     await interaction.followup.send(embed=embed)
 
@@ -1187,10 +1222,11 @@ async def reglamento(interaction: discord.Interaction):
         inline=False)
     embed.add_field(
         name='4. Escudos Azules y maldiciones (Blue Shell)',
-        value=(f'Maximo {ESCUDOS_MAX_INVENTARIO} Escudos Azules en inventario (si ganas mas con el inventario lleno, se pierden). '
+                value=(f'Maximo {ESCUDOS_MAX_INVENTARIO} Escudos Azules en inventario (si ganas mas con el inventario lleno, se pierden). '
                f'Con `/maldecir @jugador` gastas uno para lanzar un castigo aleatorio: el mismo sistema y probabilidades '
-               f'del torneo modelo (ver campo 4b mas abajo). Maximo {MALDICION_MAX_ACTIVAS} maldiciones activas por '
-               f'victima a la vez, duran {MALDICION_DURACION_HORAS}h cada una.'),
+               f'del torneo modelo (ver campo 4b mas abajo). Maximo de maldiciones activas por victima segun su puesto: '
+               f'Puesto 1 hasta {MALDICION_MAX_ACTIVAS_TOP1}, Puesto 2 hasta {MALDICION_MAX_ACTIVAS_TOP2}, resto hasta '
+               f'{MALDICION_MAX_ACTIVAS}. Duran {MALDICION_DURACION_HORAS}h cada una.'),
         inline=False)
     embed.add_field(
         name='4b. Los 10 castigos posibles (probabilidad real, tras descartar Reverse)',
@@ -1201,7 +1237,7 @@ async def reglamento(interaction: discord.Interaction):
         inline=False)
     embed.add_field(
         name='5. Cooldown de recepcion',
-        value='Top 1: sin cooldown. Top 2: 4h. Top 3-5: 6h. Resto de participantes: 12h. Se aplica sobre quien RECIBE la maldicion.',
+        value=f'{COOLDOWN_RECEPCION_HORAS}h fijas para todos los puestos (incluido el Puesto 1). Se aplica sobre quien RECIBE la maldicion.',
         inline=False)
     embed.add_field(
         name='6. Reverse',
@@ -1237,7 +1273,9 @@ async def reglamento(interaction: discord.Interaction):
         value=('Se cumple en la siguiente partida posible. Excepciones: si ya habias aceptado la cola cuando llego, o si es '
                'imposible cumplirlo (ej. te toca un campeon baneado), se cumple en la siguiente que puedas. Prohibido sabotear '
                'tu propio castigo para volverlo imposible. Jugar partidas ignorando un castigo pendiente es incumplir la norma. '
-               'No tienes que marcar nada: la Directiva revisa y marca como cumplido con `/cumplir_castigo` en un plazo razonable.'),
+               'No tienes que marcar nada: la Directiva revisa y marca como cumplido con `/cumplir_castigo` en un plazo razonable. '
+               f'Si un castigo lleva mas de {ALERTA_INCUMPLIMIENTO_HORAS}h sin marcarse como cumplido, el bot avisa '
+               'automaticamente a la Directiva y por DM al jugador para que se verifique.'),
         inline=False)
     embed.add_field(
         name='12. Premios',
@@ -1280,7 +1318,7 @@ async def terminos(interaction: discord.Interaction):
         inline=False)
     embed.add_field(
         name='Cooldown de recepcion',
-        value='Tiempo que debe pasar antes de que alguien pueda volver a maldecir a un jugador especifico, segun su posicion: Top1 sin cooldown, Top2 4h, Top3-5 6h, resto 12h.',
+        value=f'Tiempo que debe pasar antes de que alguien pueda volver a maldecir a un jugador especifico: {COOLDOWN_RECEPCION_HORAS}h fijas, igual para todos los puestos.',
         inline=False)
     embed.add_field(
         name='Reverse',
@@ -1436,9 +1474,9 @@ async def ayuda(interaction: discord.Interaction):
         name='Escudos Azules (maldiciones)',
         value=(f'Se ganan automaticamente por hazanas en partida (pentakill, 22 kills, 30 asistencias, rachas, comeback de oro, '
                f'KDA perfecto, victorias largas, etc.) o si la Directiva las otorga, maximo {ESCUDOS_MAX_INVENTARIO} en inventario. '
-               f'Usa `/maldecir` para gastar uno. Maximo {MALDICION_MAX_ACTIVAS} maldiciones activas por victima. Cooldown de '
-               f'recepcion segun posicion del objetivo (Top1 0h, Top2 4h, Top3-5 6h, resto 12h). Si acumulas '
-               f'{CASTIGOS_PENDIENTES_PARA_AEGIS} sin cumplir se activa un Aegis (proteccion) de {AEGIS_DURACION_HORAS}h. '
+               f'Usa `/maldecir` para gastar uno. Maximo de maldiciones activas por victima segun su puesto (Puesto 1: '
+               f'{MALDICION_MAX_ACTIVAS_TOP1}, Puesto 2: {MALDICION_MAX_ACTIVAS_TOP2}, resto: {MALDICION_MAX_ACTIVAS}). '
+               f'Cooldown de recepcion fijo de {COOLDOWN_RECEPCION_HORAS}h para todos. Si acumulas '
                f'Usa `/terminos` o `/reglamento` para el detalle completo.'),
         inline=False
     )
@@ -1506,7 +1544,8 @@ async def escudos(interaction: discord.Interaction):
             ) or 'Ninguna'
             pos = posicion_de_jugador(db, puuid)
             cd_horas = cooldown_recepcion_horas(pos)
-            cd_txt = 'sin cooldown (eres Top 1)' if cd_horas == 0 else f'{cd_horas}h'
+        cd_txt = f'{cd_horas}h'
+        max_activas = maldicion_max_activas_por_posicion(pos)
             restante_recepcion = 0
             if data.get('ultima_maldicion_recibida'):
                 try:
@@ -1521,7 +1560,7 @@ async def escudos(interaction: discord.Interaction):
                 f'Escudos Azules disponibles: **{data.get("escudos", 0)}/{ESCUDOS_MAX_INVENTARIO}**\n'
                 f'{proteccion_txt}\n'
                 f'Aegis (proteccion): {aegis_txt}\n'
-                f'Maldiciones activas sobre ti ({len(activas)}/{MALDICION_MAX_ACTIVAS}):\n{malds_txt}'
+                f'Maldiciones activas sobre ti ({len(activas)}/{max_activas} - limite segun tu puesto):\n{malds_txt}'
             )
             return
     await interaction.followup.send('No estas registrado.')
@@ -1603,9 +1642,11 @@ async def maldecir(interaction: discord.Interaction, usuario: discord.Member):
         guardar_db(db)
         return
 
-    if len(maldiciones_activas_de(destino_data)) >= MALDICION_MAX_ACTIVAS:
+        pos_destino = posicion_de_jugador(db, destino_puuid)
+        max_activas_destino = maldicion_max_activas_por_posicion(pos_destino)
+        if len(maldiciones_activas_de(destino_data)) >= max_activas_destino:
         await interaction.followup.send(
-            f'**{destino_data["nombre"]}** ya tiene el maximo de {MALDICION_MAX_ACTIVAS} maldiciones activas ahora mismo. '
+                f'**{destino_data["nombre"]}** ya tiene el maximo de {max_activas_destino} maldiciones activas ahora mismo. '
             f'Intenta con otro objetivo o espera a que expiren (dura {MALDICION_DURACION_HORAS}h).')
         return
 
@@ -1654,16 +1695,30 @@ async def maldecir(interaction: discord.Interaction, usuario: discord.Member):
         embed.set_thumbnail(url=icono_campeon('Yuumi'))
     else:
         embed.add_field(name='Efecto', value=efecto['texto'], inline=False)
-    cd_destino_txt = 'sin cooldown (Top 1)' if cooldown_recepcion_horas(pos_objetivo) == 0 else f'{cooldown_recepcion_horas(pos_objetivo)}h de cooldown de recepcion'
-    embed.set_footer(text=f'Dura {MALDICION_DURACION_HORAS}h - Maximo {MALDICION_MAX_ACTIVAS} activas por jugador - El objetivo original tenia {cd_destino_txt}')
-    await interaction.followup.send(
-        content=f'<@{destino_data["discord_id"]}> te lanzaron una maldicion Blue Shell!',
-        embed=embed)
-    if aegis_otorgado:
-        await interaction.followup.send(
-            f'<@{destino_data["discord_id"]}> acumulaste {CASTIGOS_PENDIENTES_PARA_AEGIS} castigos (maldiciones) sin cumplir: '
-            f'se activo tu **Aegis** (proteccion) por {AEGIS_DURACION_HORAS}h. Nadie podra maldecirte mientras dure.')
-
+        cd_destino_txt = f'{cooldown_recepcion_horas(pos_objetivo)}h de cooldown de recepcion'
+        embed.set_footer(text=f'Dura {MALDICION_DURACION_HORAS}h - Maximo {max_activas_destino} activas por jugador - El objetivo original tenia {cd_destino_txt}')
+        canal_destino = canal_maldiciones()
+        if canal_destino:
+            await canal_destino.send(
+                content=f'<@{destino_data["discord_id"]}> te lanzaron una maldicion Blue Shell!',
+                embed=embed)
+            if canal_destino.id != interaction.channel_id:
+                await interaction.followup.send(f'Maldicion lanzada. Revisa {canal_destino.mention} para el detalle.')
+        else:
+            await interaction.followup.send(
+                content=f'<@{destino_data["discord_id"]}> te lanzaron una maldicion Blue Shell!',
+                embed=embed)
+        await enviar_dm_seguro(
+            destino_data['discord_id'],
+            f'Te lanzaron una maldicion Blue Shell en SoloQ Challenge: {efecto["texto"]}\nDura {MALDICION_DURACION_HORAS}h. Revisa el canal de maldiciones para mas detalles.'
+        )
+        if aegis_otorgado:
+            aegis_msg = (f'<@{destino_data["discord_id"]}> acumulaste {CASTIGOS_PENDIENTES_PARA_AEGIS} castigos (maldiciones) sin cumplir: '
+                         f'se activo tu **Aegis** (proteccion) por {AEGIS_DURACION_HORAS}h. Nadie podra maldecirte mientras dure.')
+            if canal_destino:
+                await canal_destino.send(aegis_msg)
+            else:
+                await interaction.followup.send(aegis_msg)
 
 @tree.command(name='elegir_campeon', description='Elige tu campeon si te toco una maldicion de campeon aleatorio')
 @app_commands.describe(campeon='El campeon que eliges entre las opciones dadas')
@@ -1841,9 +1896,18 @@ async def castigar(interaction: discord.Interaction, usuario: discord.Member, pu
                 'admin': str(interaction.user.id)
             })
             guardar_registros(registros)
-            await interaction.followup.send(
-                f'<@{usuario.id}> recibiste un castigo de **-{puntos} puntos**.\n'
-                f'Motivo: {motivo}\nTotal castigos: -{data["castigos_total"]}')
+            texto_castigo = f'<@{usuario.id}> recibiste un castigo de **-{puntos} puntos**.\nMotivo: {motivo}\nTotal castigos: -{data["castigos_total"]}'
+            canal_destino = canal_maldiciones()
+            if canal_destino:
+                await canal_destino.send(texto_castigo)
+                if canal_destino.id != interaction.channel_id:
+            await interaction.followup.send(f'Castigo aplicado. Revisa {canal_destino.mention} para el detalle.')
+        else:
+            await interaction.followup.send(texto_castigo)
+        await enviar_dm_seguro(
+            str(usuario.id),
+            f'Recibiste un castigo en SoloQ Challenge: -{puntos} puntos.\nMotivo: {motivo}'
+        )
             return
     await interaction.followup.send('Usuario no encontrado en el torneo.')
 
@@ -2128,28 +2192,54 @@ async def actualizar_canal():
         return
     await canal.purge(limit=5)
     await mostrar_tabla(canal)
-
+@tasks.loop(minutes=30)
+async def revisar_incumplimientos():
+    """Revisa si algun castigo (maldicion) lleva mas de ALERTA_INCUMPLIMIENTO_HORAS sin marcarse como
+    cumplido. Si es asi, avisa UNA sola vez (queda marcado para no repetir el aviso) en el canal de
+    maldiciones, mencionando a la Directiva, y por mensaje directo al jugador afectado."""
+    db = cargar_db()
+    cambios = False
+    avisos = []
+    for puuid, data in jugadores_validos(db).items():
+        for m in data.get('maldiciones', []) or []:
+            if m.get('cumplido') or m.get('alertado_incumplimiento'):
+                continue
+            try:
+                fecha = datetime.datetime.fromisoformat(m['fecha'])
+            except Exception:
+                continue
+            horas = (datetime.datetime.now() - fecha).total_seconds() / 3600
+            if horas < ALERTA_INCUMPLIMIENTO_HORAS:
+                continue
+            m['alertado_incumplimiento'] = True
+            cambios = True
+            avisos.append((data['discord_id'], data['nombre'], m.get('texto', ''), round(horas, 1)))
+    if cambios:
+        guardar_db(db)
+    if not avisos:
+        return
+    canal = canal_maldiciones()
+    guild = client.get_guild(int(DISCORD_GUILD_ID))
+    rol = discord.utils.get(guild.roles, name=ROL_DIRECTIVA_NOMBRE) if guild else None
+    mencion_rol = rol.mention if rol else f'@{ROL_DIRECTIVA_NOMBRE}'
+    for discord_id, nombre, texto_castigo, horas in avisos:
+        mensaje = (f'{mencion_rol} **{nombre}** (<@{discord_id}>) lleva mas de {round(horas)}h sin que se '
+                   f'marque como cumplido su castigo: "{texto_castigo}". Verifiquen con `/cumplir_castigo`.')
+        if canal:
+            try:
+                await canal.send(mensaje)
+            except Exception:
+                pass
+        await enviar_dm_seguro(
+            discord_id,
+            f'Recordatorio de SoloQ Challenge: tu maldicion "{texto_castigo}" lleva mas de {round(horas)}h sin '
+            'marcarse como cumplida. Si ya la cumpliste, pidele a la Directiva que la confirme con /cumplir_castigo.'
+        )
 
 @tasks.loop(minutes=5)
 async def voice_checkpoint():
     for discord_id in list(VOICE_SESIONES.keys()):
         flush_voice_time(discord_id)
-
-
-@client.event
-async def on_voice_state_update(member, before, after):
-    if member.bot:
-        return
-    discord_id = str(member.id)
-    estaba_conectado = before.channel is not None
-    esta_conectado = after.channel is not None
-    if not estaba_conectado and esta_conectado:
-        VOICE_SESIONES[discord_id] = datetime.datetime.now()
-    elif estaba_conectado and not esta_conectado:
-        flush_voice_time(discord_id)
-        VOICE_SESIONES.pop(discord_id, None)
-
-
 _comandos_sincronizados = False
 
 
@@ -2170,6 +2260,8 @@ async def on_ready():
         actualizar_canal.start()
     if not voice_checkpoint.is_running():
         voice_checkpoint.start()
+        if not revisar_incumplimientos.is_running():
+            revisar_incumplimientos.start()
     if not revisar_partidas_recientes.is_running():
         revisar_partidas_recientes.start()
     if not sincronizar_sheets.is_running():
