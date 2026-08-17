@@ -905,7 +905,7 @@ def discord_tag_de(discord_id):
 def calcular_tabla(db):
     """Devuelve (high, low, pendientes, sin_voz) con los datos ya frescos de Riot.
     El orden dentro de cada categoria se basa en 'escalado' (division/liga), no solo LP crudo."""
-with _tabla_cache_lock:
+    with _tabla_cache_lock:
         if _tabla_cache is not None and (time.time() - _tabla_cache_ts) < TABLA_CACHE_TTL_SEG:
             return _tabla_cache
     high, low, pendientes, sin_voz = [], [], [], []
