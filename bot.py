@@ -2261,6 +2261,20 @@ async def revisar_incumplimientos():
             'marcarse como cumplida. Si ya la cumpliste, pidele a la Directiva que la confirme con /cumplir_castigo.'
         )
 
+@client.event
+async def on_voice_state_update(member, before, after):
+    if member.bot:
+        return
+    discord_id = str(member.id)
+    estaba_conectado = before.channel is not None
+    esta_conectado = after.channel is not None
+    if not estaba_conectado and esta_conectado:
+        VOICE_SESIONES[discord_id] = datetime.datetime.now()
+    elif estaba_conectado and not esta_conectado:
+        flush_voice_time(discord_id)
+        VOICE_SESIONES.pop(discord_id, None)
+
+
 @tasks.loop(minutes=5)
 async def voice_checkpoint():
     for discord_id in list(VOICE_SESIONES.keys()):
