@@ -7,7 +7,7 @@ import os
 import random
 import datetime
 import asyncio
-import signal
+import signalf
 import sys
 import time
 from threading import Thread, Lock
@@ -656,7 +656,7 @@ def maldiciones_activas_de(data):
             fecha = datetime.datetime.fromisoformat(m['fecha'])
         except Exception:
             continue
-        if (ahora - fecha).total_seconds() / 3600 < MALDICION_DURACION_HORAS:
+        if (ahora - fecha).total_seconds() / 3600 < MALDICION_DURACION_HORAS or not m.get('cumplido'):
             activas.append(m)
     return activas
 
@@ -1252,7 +1252,7 @@ async def reglamento(interaction: discord.Interaction):
                f'Con `/maldecir @jugador` gastas uno para lanzar un castigo aleatorio: el mismo sistema y probabilidades '
                f'del torneo modelo (ver campo 4b mas abajo). Maximo de maldiciones activas por victima segun su puesto: '
                f'Puesto 1 hasta {MALDICION_MAX_ACTIVAS_TOP1}, Puesto 2 hasta {MALDICION_MAX_ACTIVAS_TOP2}, resto hasta '
-               f'{MALDICION_MAX_ACTIVAS}. Duran {MALDICION_DURACION_HORAS}h cada una.'),
+               f'{MALDICION_MAX_ACTIVAS}. No expiran solas: quedan activas y acumuladas hasta que la Directiva las marque como cumplidas con `/cumplir_castigo`.'),
         inline=False)
     embed.add_field(
         name='4b. Los 10 castigos posibles (probabilidad real, tras descartar Reverse)',
@@ -1300,7 +1300,7 @@ async def reglamento(interaction: discord.Interaction):
                'tu propio castigo para volverlo imposible. Jugar partidas ignorando un castigo pendiente es incumplir la norma. '
                'No tienes que marcar nada: la Directiva revisa y marca como cumplido con `/cumplir_castigo` en un plazo razonable. '
                f'Si un castigo lleva mas de {ALERTA_INCUMPLIMIENTO_HORAS}h sin marcarse como cumplido, el bot avisa '
-               'automaticamente a la Directiva y por DM al jugador para que se verifique.'),
+               'automaticamente a la Directiva y por DM al jugador para que se verifique. Los castigos pendientes no expiran solos: siguen acumulados y contando hasta que la Directiva los marque como cumplidos.'),
         inline=False)
     embed.add_field(
         name='12. Premios',
@@ -1672,7 +1672,7 @@ async def maldecir(interaction: discord.Interaction, usuario: discord.Member):
     if len(maldiciones_activas_de(destino_data)) >= max_activas_destino:
         await interaction.followup.send(
             f'**{destino_data["nombre"]}** ya tiene el maximo de {max_activas_destino} maldiciones activas ahora mismo. '
-            f'Intenta con otro objetivo o espera a que expiren (dura {MALDICION_DURACION_HORAS}h).')
+            f'Intenta con otro objetivo o espera a que la Directiva marque alguna como cumplida (no expiran solas).')
         return
 
     if False:  # (desactivado) la maestria de Riot mezcla todas las colas, no solo SoloQ, y salia mal la info
@@ -1721,7 +1721,7 @@ async def maldecir(interaction: discord.Interaction, usuario: discord.Member):
     else:
         embed.add_field(name='Efecto', value=efecto['texto'], inline=False)
         cd_destino_txt = 'sin cooldown de recepcion'
-        embed.set_footer(text=f'Dura {MALDICION_DURACION_HORAS}h - Maximo {max_activas_destino} activas por jugador - El objetivo original tenia {cd_destino_txt}')
+        embed.set_footer(text=f'No expira sola: queda activa hasta que la Directiva la marque cumplida - Maximo {max_activas_destino} activas por jugador - El objetivo original tenia {cd_destino_txt}')
     canal_destino = canal_maldiciones()
     if canal_destino:
         await canal_destino.send(
@@ -1735,7 +1735,7 @@ async def maldecir(interaction: discord.Interaction, usuario: discord.Member):
             embed=embed)
     await enviar_dm_seguro(
         destino_data['discord_id'],
-        f'Te lanzaron una maldicion Blue Shell en SoloQ Challenge: {efecto["texto"]}\nDura {MALDICION_DURACION_HORAS}h. Revisa el canal de maldiciones para mas detalles.'
+        f'Te lanzaron una maldicion Blue Shell en SoloQ Challenge: {efecto["texto"]}\nQueda activa hasta que la Directiva la marque como cumplida (no expira sola). Revisa el canal de maldiciones para mas detalles.'
     )
     if aegis_otorgado:
         aegis_msg = (f'<@{destino_data["discord_id"]}> llenaste tu cupo de {max_activas_destino} maldiciones activas: '
