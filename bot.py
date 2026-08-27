@@ -7,7 +7,7 @@ import os
 import random
 import datetime
 import asyncio
-import signalf
+import signal
 import sys
 import time
 from threading import Thread, Lock
