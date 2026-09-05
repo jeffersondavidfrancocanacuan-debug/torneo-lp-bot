@@ -2946,7 +2946,7 @@ def api_tabla():
                      'estado_torneo': calcular_estado_torneo(db)})
 
 
-Thread(target=lambda: app.run(host='0.0.0.0', port=10000), daemon=True).start()
+Thread(target=lambda: app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 10000))), daemon=True).start()
 
 
 def _manejar_apagado(signum, frame):
