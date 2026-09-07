@@ -91,7 +91,7 @@ POSTPARTIDA_GRACIA_MINUTOS = 10     # minutos tras terminar una partida en los q
 TORNEO_BLOQUEO_FINAL_HORAS = 48     # ultimas horas del torneo en las que el sistema Blue Shell se desactiva
 DROP_DIARIO_INTERVALO_MIN = 10      # frecuencia de revision de partidas para escudos automaticos
 COOLDOWN_RECEPCION_HORAS = 12       # cooldown fijo (para todos los puestos) antes de poder volver a maldecir a alguien
-ALERTA_INCUMPLIMIENTO_HORAS = 24    # si un castigo lleva mas de esto sin cumplirse, se avisa a la Directiva y al jugador
+ALERTA_INCUMPLIMIENTO_HORAS = 12    # si un castigo lleva mas de esto sin cumplirse, se reemplaza automaticamente por uno nuevo aleatorio (se reinicia el plazo)
 
 
 def cooldown_recepcion_horas(posicion):
@@ -113,8 +113,8 @@ def maldicion_max_activas_por_posicion(posicion):
 def probabilidad_reverse(posicion):
     """Probabilidad de que la maldicion rebote hacia quien la lanzo, segun la posicion del objetivo.
     Cuanto mas abajo este el objetivo, mas facil es que rebote (tirar hacia arriba es mas seguro)."""
-    tabla = {1: 0.01, 2: 0.02, 3: 0.03, 4: 0.04, 5: 0.05}
-    return tabla.get(posicion, 0.15)
+    tabla = {1: 0.20, 2: 0.20, 3: 0.20, 4: 0.20, 5: 0.20}
+    return tabla.get(posicion, 0.20)
 
 
 def posicion_de_jugador(db, puuid):
@@ -261,25 +261,15 @@ CASTIGOS_OFICIALES = [
 ]
 
 
-def generar_efecto_maldicion(posicion_objetivo=None):
-    """Devuelve un dict {tipo, texto, opciones, elegido} representando el efecto de la maldicion,
-    replicando el sistema Blue Shell del torneo modelo: primero se sortea el Reverse segun la
-    posicion del objetivo (tabla oficial, ver probabilidad_reverse), y si no sale, se sortea uno
-    de los 10 castigos oficiales respetando sus probabilidades reales (CASTIGOS_OFICIALES)."""
-    if random.random() < probabilidad_reverse(posicion_objetivo):
-        return {
-            'tipo': 'reverse',
-            'texto': 'REVERSE: la maldicion rebota. El castigo lo cumple quien la lanzo, no el objetivo.',
-            'opciones': [], 'elegido': None,
-        }
-
+def _elegir_castigo_concreto():
+    """Sortea uno de los 10 castigos oficiales (sin reverse) respetando sus probabilidades reales
+    (CASTIGOS_OFICIALES). Se usa tanto para lanzamientos normales como para el reroll automatico de
+    castigos incumplidos y para el castigo concreto que le toca a quien sufre un Reverse."""
     tipos = [c[0] for c in CASTIGOS_OFICIALES]
     pesos = [c[1] for c in CASTIGOS_OFICIALES]
     tipo = random.choices(tipos, weights=pesos, k=1)[0]
 
     if tipo == 'sin_3_campeones':
-        # El texto definitivo (con los nombres reales) se completa en /maldecir, que si puede
-        # consultar de forma asincrona la maestria de campeones del jugador afectado via la API de Riot.
         return {'tipo': tipo, 'texto': 'No puedes jugar tus **3 campeones mas jugados de este SoloQ** en tu proxima partida (la Directiva los verifica en tu historial de SoloQ).',
                 'opciones': [], 'elegido': None}
     if tipo == 'campeon_aleatorio':
@@ -298,6 +288,17 @@ def generar_efecto_maldicion(posicion_objetivo=None):
 
     texto = next(c[2] for c in CASTIGOS_OFICIALES if c[0] == tipo)
     return {'tipo': tipo, 'texto': texto, 'opciones': [], 'elegido': None}
+
+def generar_efecto_maldicion(posicion_objetivo=None):
+    """Devuelve un dict {tipo, texto, opciones, elegido, reverse} representando el efecto de la
+    maldicion: se sortea el Reverse (20% fijo para todos, ver probabilidad_reverse) y, salga o no,
+    se sortea de una vez el castigo concreto de los 10 oficiales (CASTIGOS_OFICIALES) que corresponde
+    cumplir. Si sale Reverse el castigo concreto ya viene resuelto automaticamente: no hace falta
+    ningun paso manual adicional, solo cambia quien lo cumple (ver 'reverse' en el resultado)."""
+    reverse = random.random() < probabilidad_reverse(posicion_objetivo)
+    efecto = _elegir_castigo_concreto()
+    efecto['reverse'] = reverse
+    return efecto
 
 
 # Sesiones de voz activas en memoria: {discord_id: datetime_de_ultimo_checkpoint}
@@ -1266,11 +1267,11 @@ async def reglamento(interaction: discord.Interaction):
         value=f'Eliminado: las maldiciones se acumulan sin espera hasta el maximo del puesto. Al llenarse el cupo se activa un Aegis de {AEGIS_DURACION_HORAS}h.',
         inline=False)
     embed.add_field(
-        name='6. Reverse',
-        value=('Cuanto mas abajo este tu objetivo, mas probable es que la shell rebote y el castigo lo cumplas tu. '
-               'Top1: 1% - Top2: 2% - Top3: 3% - Top4: 4% - Top5: 5% - Resto: 15%. Tirar hacia arriba es mas seguro. '
-               'Si sale reverse no tienes que hacer nada: rebota sola y el castigo se sortea para quien la lanzo.'),
-        inline=False)
+            name='6. Reverse',
+            value=('Probabilidad fija de **20%** para todos, sin importar el puesto del objetivo. '
+                   'Si sale reverse no tienes que hacer nada: el castigo concreto ya viene resuelto '
+                   'automaticamente y lo cumple quien lanzo la maldicion, no el objetivo.'),
+            inline=False)
     embed.add_field(
         name='7. Restricciones de lanzamiento',
         value=('No puedes lanzar una maldicion si estas en una partida en vivo (ya no hay espera tras terminar una partida). '
@@ -1294,14 +1295,15 @@ async def reglamento(interaction: discord.Interaction):
                f'automaticamente un Aegis de {AEGIS_DURACION_HORAS}h que lo protege de nuevas maldiciones.'),
         inline=False)
     embed.add_field(
-        name='11. Cumplimiento de castigos',
-        value=('Se cumple en la siguiente partida posible. Excepciones: si ya habias aceptado la cola cuando llego, o si es '
-               'imposible cumplirlo (ej. te toca un campeon baneado), se cumple en la siguiente que puedas. Prohibido sabotear '
-               'tu propio castigo para volverlo imposible. Jugar partidas ignorando un castigo pendiente es incumplir la norma. '
-               'No tienes que marcar nada: la Directiva revisa y marca como cumplido con `/cumplir_castigo` en un plazo razonable. '
-               f'Si un castigo lleva mas de {ALERTA_INCUMPLIMIENTO_HORAS}h sin marcarse como cumplido, el bot avisa '
-               'automaticamente a la Directiva y por DM al jugador para que se verifique. Los castigos pendientes no expiran solos: siguen acumulados y contando hasta que la Directiva los marque como cumplidos.'),
-        inline=False)
+            name='11. Cumplimiento de castigos',
+            value=('Se cumple en la siguiente partida posible. Excepciones: si ya habias aceptado la cola cuando llego, o si es '
+                   'imposible cumplirlo (ej. te toca un campeon baneado), se cumple en la siguiente que puedas. Prohibido sabotear '
+                   'tu propio castigo para volverlo imposible. Jugar partidas ignorando un castigo pendiente es incumplir la norma. '
+                   'La Directiva marca el castigo cumplido con `/cumplir_castigo` (elige de una lista cual fue exactamente). '
+                   f'Si un castigo lleva mas de {ALERTA_INCUMPLIMIENTO_HORAS}h sin marcarse como cumplido, se reemplaza '
+                   'automaticamente por uno nuevo aleatorio (se avisa a la Directiva y por DM al jugador) y el plazo se reinicia. '
+                   'Los castigos pendientes no expiran solos: siguen acumulados y contando para el maximo de tu puesto hasta que la Directiva los marque como cumplidos.'),
+            inline=False)
     embed.add_field(
         name='12. Premios',
         value=(f'Ganador general: **${PREMIO_GANADOR_USD} USD** en efectivo + insignia/rol de honor en el servidor. '
@@ -1656,7 +1658,7 @@ async def maldecir(interaction: discord.Interaction, usuario: discord.Member):
 
     efecto = generar_efecto_maldicion(pos_objetivo)
     destino_puuid, destino_data = target_puuid, target_data
-    if efecto['tipo'] == 'reverse':
+    if efecto.get('reverse'):
         destino_puuid, destino_data = caster_puuid, caster_data
 
     if aegis_activo(destino_data):
@@ -1688,7 +1690,7 @@ async def maldecir(interaction: discord.Interaction, usuario: discord.Member):
     destino_data['ultima_maldicion_recibida'] = ahora
     destino_data.setdefault('maldiciones', []).append({
         'tipo': efecto['tipo'], 'texto': efecto['texto'], 'opciones': efecto['opciones'],
-        'elegido': efecto['elegido'], 'de': caster_id, 'fecha': ahora, 'cumplido': False,
+        'elegido': efecto['elegido'], 'de': caster_id, 'fecha': ahora, 'cumplido': False, 'reverse': efecto.get('reverse', False),
     })
 
     # Aegis: si el destino acumula demasiados castigos activos sin cumplir, se protege temporalmente.
@@ -1711,7 +1713,7 @@ async def maldecir(interaction: discord.Interaction, usuario: discord.Member):
     embed = discord.Embed(title='Maldicion lanzada!', color=0x9b59b6, timestamp=datetime.datetime.now())
     embed.add_field(name='Lanzada por', value=f'<@{caster_id}>', inline=True)
     embed.add_field(name='Objetivo original', value=f'**{target_data["nombre"]}**', inline=True)
-    embed.add_field(name='Objetivo final', value=f'**{destino_data["nombre"]}**' + (' (REVERSE)' if efecto['tipo'] == 'reverse' else ''), inline=True)
+    embed.add_field(name='Objetivo final', value=f'**{destino_data["nombre"]}**' + (' (REVERSE)' if efecto.get('reverse') else ''), inline=True)
     if efecto['tipo'] == 'campeon_aleatorio':
         embed.add_field(name='Efecto', value=efecto['texto'], inline=False)
         embed.set_thumbnail(url=icono_campeon(efecto['elegido']))
@@ -1776,8 +1778,46 @@ async def elegir_campeon(interaction: discord.Interaction, campeon: str):
     await interaction.followup.send('No estas registrado.')
 
 
-@tree.command(name='cumplir_castigo', description='(Directiva) Marca la maldicion mas antigua sin cumplir de un jugador como cumplida')
-@app_commands.describe(usuario='Jugador que cumplio su castigo')
+class SeleccionCastigoView(discord.ui.View):
+    """Menu desplegable para que la Directiva elija EXACTAMENTE cual de los castigos pendientes de
+    un jugador fue el que se cumplio (en vez de asumir siempre el mas antiguo)."""
+    def __init__(self, jugador_puuid, jugador_discord_id, pendientes):
+        super().__init__(timeout=120)
+        self.jugador_puuid = jugador_puuid
+        self.jugador_discord_id = jugador_discord_id
+        opciones = []
+        for m in pendientes[:25]:
+            texto = m.get('texto', '')
+            label = (texto[:97] + '...') if len(texto) > 100 else texto
+            opciones.append(discord.SelectOption(label=label or 'Castigo', value=m.get('fecha', '')))
+        self.select = discord.ui.Select(placeholder='Elige el castigo que se cumplio...', options=opciones)
+        self.select.callback = self.on_select
+        self.add_item(self.select)
+
+    async def on_select(self, interaction: discord.Interaction):
+        fecha_elegida = self.select.values[0]
+        db = cargar_db()
+        for puuid, data in jugadores_validos(db).items():
+            if puuid != self.jugador_puuid:
+                continue
+            texto_marcado = None
+            for m in data.get('maldiciones', []):
+                if m.get('fecha') == fecha_elegida and not m.get('cumplido'):
+                    m['cumplido'] = True
+                    texto_marcado = m.get('texto')
+                    break
+            if texto_marcado is None:
+                await interaction.response.edit_message(content='Ese castigo ya no esta disponible (puede que se haya reemplazado o ya se marco). Vuelve a intentar `/cumplir_castigo`.', view=None)
+                return
+            guardar_db(db)
+            await interaction.response.edit_message(
+                content=f'<@{self.jugador_discord_id}> tu castigo fue marcado como **cumplido** por la Directiva: "{texto_marcado}"',
+                view=None)
+            return
+        await interaction.response.edit_message(content='Jugador no encontrado en el torneo.', view=None)
+
+@tree.command(name='cumplir_castigo', description='(Directiva) Elige cual castigo pendiente de un jugador se cumplio')
+@app_commands.describe(usuario='Jugador que cumplio un castigo')
 async def cumplir_castigo(interaction: discord.Interaction, usuario: discord.Member):
     if not await requiere_directiva(interaction):
         return
@@ -1789,16 +1829,11 @@ async def cumplir_castigo(interaction: discord.Interaction, usuario: discord.Mem
             if not pendientes_j:
                 await interaction.followup.send(f'**{data["nombre"]}** no tiene castigos pendientes por cumplir.')
                 return
-            # marca la mas antigua
             pendientes_j.sort(key=lambda m: m.get('fecha', ''))
-            objetivo = pendientes_j[0]
-            for m in data.get('maldiciones', []):
-                if m is objetivo or (m.get('fecha') == objetivo.get('fecha') and m.get('texto') == objetivo.get('texto')):
-                    m['cumplido'] = True
-                    break
-            guardar_db(db)
+            view = SeleccionCastigoView(puuid, usuario.id, pendientes_j)
             await interaction.followup.send(
-                f'<@{usuario.id}> tu castigo fue marcado como **cumplido** por la Directiva: "{objetivo["texto"]}"')
+                f'**{data["nombre"]}** tiene {len(pendientes_j)} castigo(s) pendiente(s). Elige cual se cumplio:',
+                view=view)
             return
     await interaction.followup.send('Usuario no encontrado en el torneo.')
 
@@ -2220,14 +2255,16 @@ async def actualizar_canal():
 @tasks.loop(minutes=30)
 async def revisar_incumplimientos():
     """Revisa si algun castigo (maldicion) lleva mas de ALERTA_INCUMPLIMIENTO_HORAS sin marcarse como
-    cumplido. Si es asi, avisa UNA sola vez (queda marcado para no repetir el aviso) en el canal de
-    maldiciones, mencionando a la Directiva, y por mensaje directo al jugador afectado."""
+    cumplido. Si es asi, se reemplaza automaticamente por un castigo nuevo aleatorio (se reinicia el
+    plazo desde cero) y se avisa en el canal de maldiciones (mencionando a la Directiva) y por DM al
+    jugador afectado. Los castigos siguen acumulados y contando para el maximo de su puesto: esto solo
+    cambia CUAL castigo especifico esta pendiente, no reduce el total."""
     db = cargar_db()
     cambios = False
     avisos = []
     for puuid, data in jugadores_validos(db).items():
         for m in data.get('maldiciones', []) or []:
-            if m.get('cumplido') or m.get('alertado_incumplimiento'):
+            if m.get('cumplido'):
                 continue
             try:
                 fecha = datetime.datetime.fromisoformat(m['fecha'])
@@ -2236,9 +2273,16 @@ async def revisar_incumplimientos():
             horas = (datetime.datetime.now() - fecha).total_seconds() / 3600
             if horas < ALERTA_INCUMPLIMIENTO_HORAS:
                 continue
-            m['alertado_incumplimiento'] = True
+            texto_anterior = m.get('texto', '')
+            nuevo = _elegir_castigo_concreto()
+            m['tipo'] = nuevo['tipo']
+            m['texto'] = nuevo['texto']
+            m['opciones'] = nuevo['opciones']
+            m['elegido'] = nuevo['elegido']
+            m['reverse'] = False
+            m['fecha'] = str(datetime.datetime.now())
             cambios = True
-            avisos.append((data['discord_id'], data['nombre'], m.get('texto', ''), round(horas, 1)))
+            avisos.append((data['discord_id'], data['nombre'], texto_anterior, nuevo['texto'], round(horas, 1)))
     if cambios:
         guardar_db(db)
     if not avisos:
@@ -2247,9 +2291,9 @@ async def revisar_incumplimientos():
     guild = client.get_guild(int(DISCORD_GUILD_ID))
     rol = discord.utils.get(guild.roles, name=ROL_DIRECTIVA_NOMBRE) if guild else None
     mencion_rol = rol.mention if rol else f'@{ROL_DIRECTIVA_NOMBRE}'
-    for discord_id, nombre, texto_castigo, horas in avisos:
-        mensaje = (f'{mencion_rol} **{nombre}** (<@{discord_id}>) lleva mas de {round(horas)}h sin que se '
-                   f'marque como cumplido su castigo: "{texto_castigo}". Verifiquen con `/cumplir_castigo`.')
+    for discord_id, nombre, texto_anterior, texto_nuevo, horas in avisos:
+        mensaje = (f'{mencion_rol} **{nombre}** (<@{discord_id}>) llevaba mas de {round(horas)}h sin cumplir su '
+                   f'castigo ("{texto_anterior}") y fue reemplazado automaticamente por uno nuevo: "{texto_nuevo}".')
         if canal:
             try:
                 await canal.send(mensaje)
@@ -2257,8 +2301,8 @@ async def revisar_incumplimientos():
                 pass
         await enviar_dm_seguro(
             discord_id,
-            f'Recordatorio de SoloQ Challenge: tu maldicion "{texto_castigo}" lleva mas de {round(horas)}h sin '
-            'marcarse como cumplida. Si ya la cumpliste, pidele a la Directiva que la confirme con /cumplir_castigo.'
+            f'Tu maldicion anterior ("{texto_anterior}") llevaba mas de {round(horas)}h sin cumplirse y fue '
+            f'reemplazada automaticamente por: "{texto_nuevo}". Cumplela en tu proxima partida.'
         )
 
 @client.event
