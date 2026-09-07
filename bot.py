@@ -22,6 +22,9 @@ CANAL_CLASIFICACION_ID = int(os.environ.get('CANAL_CLASIFICACION_ID', '0'))
 CANAL_MALDICIONES_ID = int(os.environ.get('CANAL_MALDICIONES_ID', '0'))
 DURACION_TORNEO = int(os.environ.get('DURACION_TORNEO', '30'))
 JUEGOS_MINIMOS_CUENTA = int(os.environ.get('JUEGOS_MINIMOS_CUENTA', '15'))
+JUEGOS_MINIMOS_DIA = int(os.environ.get('JUEGOS_MINIMOS_DIA', '5'))          # partidas de SoloQ obligatorias por dia
+LLAMADOS_ATENCION_MAX = int(os.environ.get('LLAMADOS_ATENCION_MAX', '3'))   # llamados antes de quedar marcado para expulsion
+FECHA_INICIO_REGLAS_ESTRICTAS = os.environ.get('FECHA_INICIO_REGLAS_ESTRICTAS', '2026-09-07')  # desde esta fecha aplican partidas diarias y llamados de atencion
 VOZ_MINIMA_MINUTOS = float(os.environ.get('VOZ_MINIMA_MINUTOS', '1'))
 FECHA_INICIO_TORNEO = os.environ.get('FECHA_INICIO_TORNEO', '2026-08-14T00:00:00')
 PREMIO_GANADOR_USD = os.environ.get('PREMIO_GANADOR_USD', '100')
@@ -245,33 +248,27 @@ CLASES_CAMPEONES = {
                 'Senna', 'Taric', 'Seraphine'],
 }
 
-# Los 10 castigos oficiales del torneo modelo (soloqchallenge.gg), con su probabilidad real de salir
+# Los 7 castigos oficiales del torneo modelo (soloqchallenge.gg), con su probabilidad real de salir
 # UNA VEZ que ya se descarto el Reverse (que se sortea aparte, segun la posicion del objetivo).
 CASTIGOS_OFICIALES = [
-    ('sin_3_campeones', 17, None),
     ('yuumi', 11, 'Debes jugar obligatoriamente **Yuumi** en tu proxima partida.'),
-    ('campeon_aleatorio', 11, None),
+    ('campeon_aleatorio', 38, None),
     ('sin_flash', 11, 'No puedes llevar **Flash** como hechizo de invocador en tu proxima partida.'),
     ('autofill', 11, 'Debes entrar a cola en modo **Autofill** (posicion "Cualquiera", sin elegir rol principal) en tu proxima partida.'),
     ('sin_botas', 11, 'No puedes comprar **botas** (ningun tier) ni llevar la runa **Pies Veloces** en tu proxima partida.'),
     ('hechizos_cambiados', 6, None),
-    ('sin_pociones_pinks', 6, 'No puedes comprar **pociones** ni **Control Wards (pinks)** en toda la partida.'),
     ('sin_objetos_min15', 6, 'No puedes completar ningun objeto **mitico/legendario** hasta el minuto 15.'),
-    ('clase_aleatoria', 4, None),
 ]
 
 
 def _elegir_castigo_concreto():
-    """Sortea uno de los 10 castigos oficiales (sin reverse) respetando sus probabilidades reales
+    """Sortea uno de los 7 castigos oficiales (sin reverse) respetando sus probabilidades reales
     (CASTIGOS_OFICIALES). Se usa tanto para lanzamientos normales como para el reroll automatico de
     castigos incumplidos y para el castigo concreto que le toca a quien sufre un Reverse."""
     tipos = [c[0] for c in CASTIGOS_OFICIALES]
     pesos = [c[1] for c in CASTIGOS_OFICIALES]
     tipo = random.choices(tipos, weights=pesos, k=1)[0]
 
-    if tipo == 'sin_3_campeones':
-        return {'tipo': tipo, 'texto': 'No puedes jugar tus **3 campeones mas jugados de este SoloQ** en tu proxima partida (la Directiva los verifica en tu historial de SoloQ).',
-                'opciones': [], 'elegido': None}
     if tipo == 'campeon_aleatorio':
         campeon = random.choice(CAMPEONES_POOL)
         return {'tipo': tipo, 'texto': f'Debes jugar obligatoriamente a **{campeon}** en tu proxima partida.',
@@ -280,11 +277,6 @@ def _elegir_castigo_concreto():
         par = random.choice(HECHIZOS_POSIBLES)
         return {'tipo': tipo, 'texto': f'Hechizos de invocador obligatorios: solo **{par[0]} + {par[1]}** en tu proxima partida.',
                 'opciones': [], 'elegido': None}
-    if tipo == 'clase_aleatoria':
-        clase = random.choice(list(CLASES_CAMPEONES.keys()))
-        ejemplos = ', '.join(random.sample(CLASES_CAMPEONES[clase], min(4, len(CLASES_CAMPEONES[clase]))))
-        return {'tipo': tipo, 'texto': f'Debes jugar un campeon de la clase **{clase}** en tu proxima partida (ej: {ejemplos}).',
-                'opciones': [], 'elegido': None}
 
     texto = next(c[2] for c in CASTIGOS_OFICIALES if c[0] == tipo)
     return {'tipo': tipo, 'texto': texto, 'opciones': [], 'elegido': None}
@@ -292,7 +284,7 @@ def _elegir_castigo_concreto():
 def generar_efecto_maldicion(posicion_objetivo=None):
     """Devuelve un dict {tipo, texto, opciones, elegido, reverse} representando el efecto de la
     maldicion: se sortea el Reverse (20% fijo para todos, ver probabilidad_reverse) y, salga o no,
-    se sortea de una vez el castigo concreto de los 10 oficiales (CASTIGOS_OFICIALES) que corresponde
+        se sortea de una vez el castigo concreto de los 7 oficiales (CASTIGOS_OFICIALES) que corresponde
     cumplir. Si sale Reverse el castigo concreto ya viene resuelto automaticamente: no hace falta
     ningun paso manual adicional, solo cambia quien lo cumple (ver 'reverse' en el resultado)."""
     reverse = random.random() < probabilidad_reverse(posicion_objetivo)
@@ -667,6 +659,34 @@ def castigos_pendientes_de(data):
     return [m for m in maldiciones_activas_de(data) if not m.get('cumplido')]
 
 
+def agregar_llamado_atencion(data, motivo):
+    """Suma un llamado de atencion al jugador por no cumplir una obligacion del torneo (castigo vencido
+    o partidas diarias incumplidas), vigente desde FECHA_INICIO_REGLAS_ESTRICTAS. Al llegar a
+    LLAMADOS_ATENCION_MAX (3) el jugador queda marcado 'expulsado': la Directiva debe ejecutar la
+    expulsion manualmente con /eliminar_registro. Devuelve info para armar el aviso en Discord."""
+    data['llamados_atencion'] = data.get('llamados_atencion', 0) + 1
+    cantidad = data['llamados_atencion']
+    expulsar = cantidad >= LLAMADOS_ATENCION_MAX
+    if expulsar:
+        data['expulsado'] = True
+    return {'motivo': motivo, 'cantidad': cantidad, 'expulsar': expulsar}
+
+
+def contar_partidas_ranked_dia(puuid, region_base, headers, inicio_epoch, fin_epoch):
+    """Cuenta cuantas partidas de SoloQ (queue 420) jugo el jugador entre inicio_epoch y fin_epoch
+    (epoch en segundos), usando el filtro nativo de Match-V5. Devuelve None si la API fallo (para no
+    penalizar por un error temporal de Riot, no porque el jugador incumplio)."""
+    try:
+        url = (f'https://{region_base}.api.riotgames.com/lol/match/v5/matches/by-puuid/{puuid}/ids'
+               f'?startTime={inicio_epoch}&endTime={fin_epoch}&queue=420&count=100')
+        r = HTTP_SESSION.get(url, headers=headers, timeout=8)
+        if r.status_code != 200:
+            return None
+        return len(r.json())
+    except Exception:
+        return None
+
+
 def aegis_activo(data):
     hasta = data.get('escudo_hasta')
     if not hasta:
@@ -926,6 +946,9 @@ def calcular_tabla(db):
             return _tabla_cache
     high, low, pendientes, sin_voz = [], [], [], []
     for puuid, data in jugadores_validos(db).items():
+        if data.get('expulsado'):
+            continue
+
         info = obtener_info_ranked(data['nombre'], data['region'])
         if info is None:
             continue
@@ -1214,6 +1237,11 @@ async def perfil(interaction: discord.Interaction):
     embed.add_field(name='Escudos Azules', value=f'{objetivo.get("escudos", 0)}/{ESCUDOS_MAX_INVENTARIO}', inline=True)
     aegis_txt = f'Activo - {objetivo["aegis_restante"]}h restantes' if objetivo['aegis_activo'] else 'Inactivo'
     embed.add_field(name='Aegis (proteccion)', value=aegis_txt, inline=True)
+    llamados = data.get('llamados_atencion', 0)
+    if llamados > 0 or data.get('expulsado'):
+        llamados_txt = f'{llamados}/{LLAMADOS_ATENCION_MAX}' + (' - EXPULSADO' if data.get('expulsado') else '')
+        embed.add_field(name='Llamados de atencion', value=llamados_txt, inline=True)
+
     if objetivo.get('elo_previo'):
         embed.add_field(name='Elo previo declarado', value=objetivo['elo_previo'], inline=True)
     activas = maldiciones_activas_de(data)
@@ -1256,11 +1284,10 @@ async def reglamento(interaction: discord.Interaction):
                f'{MALDICION_MAX_ACTIVAS}. No expiran solas: quedan activas y acumuladas hasta que la Directiva las marque como cumplidas con `/cumplir_castigo`.'),
         inline=False)
     embed.add_field(
-        name='4b. Los 10 castigos posibles (probabilidad real, tras descartar Reverse)',
-        value=('Sin tus 3 campeones mas jugados **17%** - Yuumi obligatorio **11%** - Campeon aleatorio obligatorio **11%** - '
-               'Sin Flash **11%** - Autofill/sin rol principal **11%** - Sin botas ni Pies Veloces **11%** - Hechizos '
-               'cambiados **6%** - Sin pociones ni pinks **6%** - Sin objetos miticos hasta min 15 **6%** - Clase de '
-               'campeon aleatoria (tirador/mago/asesino/luchador/tanque/soporte) **4%**.'),
+        name='4b. Los 7 castigos posibles (probabilidad real, tras descartar Reverse)',
+        value=('Yuumi obligatorio **11%** - Campeon especifico aleatorio obligatorio **38%** - Sin Flash **11%** - '
+               'Autofill/sin rol principal **11%** - Sin botas ni Pies Veloces **11%** - Hechizos cambiados **6%** - '
+               'Sin objetos miticos hasta min 15 **6%**.'),
         inline=False)
     embed.add_field(
         name='5. Cooldown de recepcion',
@@ -1312,6 +1339,17 @@ async def reglamento(interaction: discord.Interaction):
     embed.add_field(
         name='13. Conducta',
         value='Prohibido el uso de cuentas ajenas, boosting externo, o evadir la verificacion de voz. La Directiva puede descalificar por incumplimiento.',
+        inline=False)
+    embed.add_field(
+        name='14. Partidas diarias obligatorias',
+        value=(f'A partir del {FECHA_INICIO_REGLAS_ESTRICTAS}, todos deben jugar minimo **{JUEGOS_MINIMOS_DIA} partidas de SoloQ por dia**. '
+               'Se revisa automaticamente cada madrugada con la API de Riot. No cumplir cuenta como un llamado de atencion (ver punto 15).'),
+        inline=False)
+    embed.add_field(
+        name='15. Llamados de atencion y expulsion',
+        value=(f'A partir del {FECHA_INICIO_REGLAS_ESTRICTAS}, cada incumplimiento (castigo no cumplido a tiempo o no jugar las '
+               f'{JUEGOS_MINIMOS_DIA} partidas diarias) suma un **llamado de atencion**. Al llegar a **{LLAMADOS_ATENCION_MAX}** '
+               'llamados, la Directiva expulsa al jugador del torneo.'),
         inline=False)
     embed.set_footer(text='Usa /ayuda para ver todos los comandos disponibles. Usa /terminos para ver el glosario completo.')
     await interaction.response.send_message(embed=embed)
@@ -2241,6 +2279,66 @@ async def revisar_partidas_recientes():
                 pass
 
 
+@tasks.loop(minutes=30)
+async def revisar_partidas_diarias():
+    """Una vez al dia (madrugada, 0h-6h), revisa que cada jugador aprobado haya jugado al menos
+    JUEGOS_MINIMOS_DIA partidas de SoloQ el dia anterior. Aplica solo desde FECHA_INICIO_REGLAS_ESTRICTAS
+    en adelante. Si no cumplio, se le suma un llamado de atencion (ver agregar_llamado_atencion)."""
+    ahora = datetime.datetime.now()
+    if ahora.hour > 6:
+        return
+    hoy_str = ahora.strftime('%Y-%m-%d')
+    db = cargar_db()
+    if db.get('ultima_revision_partidas_diarias') == hoy_str:
+        return
+    ayer = (ahora - datetime.timedelta(days=1)).date()
+    try:
+        fecha_inicio = datetime.date.fromisoformat(FECHA_INICIO_REGLAS_ESTRICTAS)
+    except Exception:
+        fecha_inicio = ayer
+    db['ultima_revision_partidas_diarias'] = hoy_str
+    if ayer < fecha_inicio:
+        guardar_db(db, forzar=True)
+        return
+    inicio_epoch = int(datetime.datetime.combine(ayer, datetime.time.min).timestamp())
+    fin_epoch = int(datetime.datetime.combine(ayer, datetime.time.max).timestamp())
+    headers = {'X-Riot-Token': RIOT_API_KEY}
+    avisos = []
+    for puuid, data in jugadores_validos(db).items():
+        if data.get('estado') != 'aprobado' or data.get('expulsado'):
+            continue
+        region_base = REGION_MAP.get(data.get('region', 'lan').lower())
+        if not region_base:
+            continue
+        cantidad = await asyncio.to_thread(contar_partidas_ranked_dia, puuid, region_base, headers, inicio_epoch, fin_epoch)
+        if cantidad is None or cantidad >= JUEGOS_MINIMOS_DIA:
+            continue
+        resultado = agregar_llamado_atencion(data, f'solo jugo {cantidad}/{JUEGOS_MINIMOS_DIA} partidas de SoloQ el {ayer.strftime("%d/%m")}')
+        avisos.append((data['discord_id'], data['nombre'], cantidad, resultado))
+    guardar_db(db, forzar=True)
+    if not avisos:
+        return
+    canal = canal_maldiciones()
+    guild = client.get_guild(int(DISCORD_GUILD_ID))
+    rol = discord.utils.get(guild.roles, name=ROL_DIRECTIVA_NOMBRE) if guild else None
+    mencion_rol = rol.mention if rol else f'@{ROL_DIRECTIVA_NOMBRE}'
+    for discord_id, nombre, cantidad, resultado in avisos:
+        mensaje = (f'{mencion_rol} **{nombre}** (<@{discord_id}>) solo jugo {cantidad}/{JUEGOS_MINIMOS_DIA} partidas de SoloQ '
+                   f'ayer (minimo obligatorio). Llamado de atencion {resultado["cantidad"]}/{LLAMADOS_ATENCION_MAX}.')
+        if resultado['expulsar']:
+            mensaje += f' **{nombre} llego al maximo de llamados de atencion: la Directiva debe expulsarlo con `/eliminar_registro`.**'
+        if canal:
+            try:
+                await canal.send(mensaje)
+            except Exception:
+                pass
+        aviso_dm = (f'Solo jugaste {cantidad}/{JUEGOS_MINIMOS_DIA} partidas de SoloQ ayer (minimo obligatorio del torneo). '
+                    f'Llamado de atencion {resultado["cantidad"]}/{LLAMADOS_ATENCION_MAX}.')
+        if resultado['expulsar']:
+            aviso_dm += ' Llegaste al maximo de llamados de atencion: la Directiva procedera a expulsarte del torneo.'
+        await enviar_dm_seguro(discord_id, aviso_dm)
+
+
 # ------------------- TAREAS AUTOMATICAS -------------------
 
 @tasks.loop(minutes=30)
@@ -2256,9 +2354,10 @@ async def actualizar_canal():
 async def revisar_incumplimientos():
     """Revisa si algun castigo (maldicion) lleva mas de ALERTA_INCUMPLIMIENTO_HORAS sin marcarse como
     cumplido. Si es asi, se reemplaza automaticamente por un castigo nuevo aleatorio (se reinicia el
-    plazo desde cero) y se avisa en el canal de maldiciones (mencionando a la Directiva) y por DM al
-    jugador afectado. Los castigos siguen acumulados y contando para el maximo de su puesto: esto solo
-    cambia CUAL castigo especifico esta pendiente, no reduce el total."""
+    plazo desde cero), se suma un llamado de atencion al jugador (ver agregar_llamado_atencion) y se
+    avisa en el canal de maldiciones (mencionando a la Directiva) y por DM al jugador afectado. Los
+    castigos siguen acumulados y contando para el maximo de su puesto: esto solo cambia CUAL castigo
+    especifico esta pendiente, no reduce el total."""
     db = cargar_db()
     cambios = False
     avisos = []
@@ -2282,7 +2381,8 @@ async def revisar_incumplimientos():
             m['reverse'] = False
             m['fecha'] = str(datetime.datetime.now())
             cambios = True
-            avisos.append((data['discord_id'], data['nombre'], texto_anterior, nuevo['texto'], round(horas, 1)))
+            resultado = agregar_llamado_atencion(data, f'no cumplio a tiempo el castigo "{texto_anterior}"')
+            avisos.append((data['discord_id'], data['nombre'], texto_anterior, nuevo['texto'], round(horas, 1), resultado))
     if cambios:
         guardar_db(db)
     if not avisos:
@@ -2291,19 +2391,23 @@ async def revisar_incumplimientos():
     guild = client.get_guild(int(DISCORD_GUILD_ID))
     rol = discord.utils.get(guild.roles, name=ROL_DIRECTIVA_NOMBRE) if guild else None
     mencion_rol = rol.mention if rol else f'@{ROL_DIRECTIVA_NOMBRE}'
-    for discord_id, nombre, texto_anterior, texto_nuevo, horas in avisos:
+    for discord_id, nombre, texto_anterior, texto_nuevo, horas, resultado in avisos:
         mensaje = (f'{mencion_rol} **{nombre}** (<@{discord_id}>) llevaba mas de {round(horas)}h sin cumplir su '
-                   f'castigo ("{texto_anterior}") y fue reemplazado automaticamente por uno nuevo: "{texto_nuevo}".')
+                   f'castigo ("{texto_anterior}") y fue reemplazado automaticamente por uno nuevo: "{texto_nuevo}". '
+                   f'Llamado de atencion {resultado["cantidad"]}/{LLAMADOS_ATENCION_MAX}.')
+        if resultado['expulsar']:
+            mensaje += f' **{nombre} llego al maximo de llamados de atencion: la Directiva debe expulsarlo con `/eliminar_registro`.**'
         if canal:
             try:
                 await canal.send(mensaje)
             except Exception:
                 pass
-        await enviar_dm_seguro(
-            discord_id,
-            f'Tu maldicion anterior ("{texto_anterior}") llevaba mas de {round(horas)}h sin cumplirse y fue '
-            f'reemplazada automaticamente por: "{texto_nuevo}". Cumplela en tu proxima partida.'
-        )
+        aviso_dm = (f'Tu maldicion anterior ("{texto_anterior}") llevaba mas de {round(horas)}h sin cumplirse y fue '
+                    f'reemplazada automaticamente por: "{texto_nuevo}". Cumplela en tu proxima partida. '
+                    f'Llamado de atencion {resultado["cantidad"]}/{LLAMADOS_ATENCION_MAX}.')
+        if resultado['expulsar']:
+            aviso_dm += ' Llegaste al maximo de llamados de atencion: la Directiva procedera a expulsarte del torneo.'
+        await enviar_dm_seguro(discord_id, aviso_dm)
 
 @client.event
 async def on_voice_state_update(member, before, after):
@@ -2347,6 +2451,8 @@ async def on_ready():
             revisar_incumplimientos.start()
     if not revisar_partidas_recientes.is_running():
         revisar_partidas_recientes.start()
+    if not revisar_partidas_diarias.is_running():
+        revisar_partidas_diarias.start()
     if not sincronizar_sheets.is_running():
         sincronizar_sheets.start()
 
