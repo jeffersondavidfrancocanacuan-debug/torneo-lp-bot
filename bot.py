@@ -662,13 +662,12 @@ def castigos_pendientes_de(data):
 def agregar_llamado_atencion(data, motivo):
     """Suma un llamado de atencion al jugador por no cumplir una obligacion del torneo (castigo vencido
     o partidas diarias incumplidas), vigente desde FECHA_INICIO_REGLAS_ESTRICTAS. Al llegar a
-    LLAMADOS_ATENCION_MAX (3) el jugador queda marcado 'expulsado': la Directiva debe ejecutar la
-    expulsion manualmente con /eliminar_registro. Devuelve info para armar el aviso en Discord."""
+    LLAMADOS_ATENCION_MAX (3) se avisa a la Directiva para que evalue una posible expulsion: la
+    expulsion NUNCA es automatica, siempre es decision y accion manual de la Directiva
+    (/eliminar_registro). Devuelve info para armar el aviso en Discord."""
     data['llamados_atencion'] = data.get('llamados_atencion', 0) + 1
     cantidad = data['llamados_atencion']
     expulsar = cantidad >= LLAMADOS_ATENCION_MAX
-    if expulsar:
-        data['expulsado'] = True
     return {'motivo': motivo, 'cantidad': cantidad, 'expulsar': expulsar}
 
 
@@ -946,9 +945,6 @@ def calcular_tabla(db):
             return _tabla_cache
     high, low, pendientes, sin_voz = [], [], [], []
     for puuid, data in jugadores_validos(db).items():
-        if data.get('expulsado'):
-            continue
-
         info = obtener_info_ranked(data['nombre'], data['region'])
         if info is None:
             continue
@@ -1327,9 +1323,10 @@ async def reglamento(interaction: discord.Interaction):
                    'imposible cumplirlo (ej. te toca un campeon baneado), se cumple en la siguiente que puedas. Prohibido sabotear '
                    'tu propio castigo para volverlo imposible. Jugar partidas ignorando un castigo pendiente es incumplir la norma. '
                    'La Directiva marca el castigo cumplido con `/cumplir_castigo` (elige de una lista cual fue exactamente). '
-                   f'Si un castigo lleva mas de {ALERTA_INCUMPLIMIENTO_HORAS}h sin marcarse como cumplido, se reemplaza '
-                   'automaticamente por uno nuevo aleatorio (se avisa a la Directiva y por DM al jugador) y el plazo se reinicia. '
-                   'Los castigos pendientes no expiran solos: siguen acumulados y contando para el maximo de tu puesto hasta que la Directiva los marque como cumplidos.'),
+                   f'Si un castigo lleva mas de {ALERTA_INCUMPLIMIENTO_HORAS}h sin marcarse como cumplido, NO se reemplaza: se avisa '
+                   'a la Directiva y por DM al jugador para que evalue, y el castigo sigue pendiente y acumulado (nunca desaparece ni '
+                   'se cambia por otro) hasta que la Directiva lo marque cumplido. Los castigos pendientes no expiran solos: siguen '
+                   'acumulados y contando para el maximo de tu puesto hasta que la Directiva los marque como cumplidos.'),
             inline=False)
     embed.add_field(
         name='12. Premios',
@@ -1348,8 +1345,8 @@ async def reglamento(interaction: discord.Interaction):
     embed.add_field(
         name='15. Llamados de atencion y expulsion',
         value=(f'A partir del {FECHA_INICIO_REGLAS_ESTRICTAS}, cada incumplimiento (castigo no cumplido a tiempo o no jugar las '
-               f'{JUEGOS_MINIMOS_DIA} partidas diarias) suma un **llamado de atencion**. Al llegar a **{LLAMADOS_ATENCION_MAX}** '
-               'llamados, la Directiva expulsa al jugador del torneo.'),
+               'llamados, el bot avisa a la Directiva para que evalue el caso: la expulsion NUNCA es automatica, siempre es '
+               'una decision y accion manual de la Directiva.'),
         inline=False)
     embed.set_footer(text='Usa /ayuda para ver todos los comandos disponibles. Usa /terminos para ver el glosario completo.')
     await interaction.response.send_message(embed=embed)
@@ -2305,7 +2302,7 @@ async def revisar_partidas_diarias():
     headers = {'X-Riot-Token': RIOT_API_KEY}
     avisos = []
     for puuid, data in jugadores_validos(db).items():
-        if data.get('estado') != 'aprobado' or data.get('expulsado'):
+        if data.get('estado') != 'aprobado':
             continue
         region_base = REGION_MAP.get(data.get('region', 'lan').lower())
         if not region_base:
@@ -2353,17 +2350,18 @@ async def actualizar_canal():
 @tasks.loop(minutes=30)
 async def revisar_incumplimientos():
     """Revisa si algun castigo (maldicion) lleva mas de ALERTA_INCUMPLIMIENTO_HORAS sin marcarse como
-    cumplido. Si es asi, se reemplaza automaticamente por un castigo nuevo aleatorio (se reinicia el
-    plazo desde cero), se suma un llamado de atencion al jugador (ver agregar_llamado_atencion) y se
-    avisa en el canal de maldiciones (mencionando a la Directiva) y por DM al jugador afectado. Los
-    castigos siguen acumulados y contando para el maximo de su puesto: esto solo cambia CUAL castigo
-    especifico esta pendiente, no reduce el total."""
+    cumplido. El castigo NO se reemplaza ni se reinicia: se queda pendiente tal cual y sigue acumulado
+    y contando para el maximo de su puesto hasta que la Directiva lo marque cumplido con
+    /cumplir_castigo. Solo se suma un llamado de atencion al jugador (ver agregar_llamado_atencion) y se
+    avisa UNA SOLA VEZ (bandera 'alertado_incumplimiento') en el canal de maldiciones (mencionando a la
+    Directiva) y por DM al jugador afectado, para que la Directiva decida que hacer. La expulsion nunca
+    es automatica: siempre es decision manual de la Directiva."""
     db = cargar_db()
     cambios = False
     avisos = []
     for puuid, data in jugadores_validos(db).items():
         for m in data.get('maldiciones', []) or []:
-            if m.get('cumplido'):
+            if m.get('cumplido') or m.get('alertado_incumplimiento'):
                 continue
             try:
                 fecha = datetime.datetime.fromisoformat(m['fecha'])
@@ -2372,17 +2370,10 @@ async def revisar_incumplimientos():
             horas = (datetime.datetime.now() - fecha).total_seconds() / 3600
             if horas < ALERTA_INCUMPLIMIENTO_HORAS:
                 continue
-            texto_anterior = m.get('texto', '')
-            nuevo = _elegir_castigo_concreto()
-            m['tipo'] = nuevo['tipo']
-            m['texto'] = nuevo['texto']
-            m['opciones'] = nuevo['opciones']
-            m['elegido'] = nuevo['elegido']
-            m['reverse'] = False
-            m['fecha'] = str(datetime.datetime.now())
+            m['alertado_incumplimiento'] = True
             cambios = True
-            resultado = agregar_llamado_atencion(data, f'no cumplio a tiempo el castigo "{texto_anterior}"')
-            avisos.append((data['discord_id'], data['nombre'], texto_anterior, nuevo['texto'], round(horas, 1), resultado))
+            resultado = agregar_llamado_atencion(data, f'no cumplio a tiempo el castigo "{m.get("texto", "")}"')
+            avisos.append((data['discord_id'], data['nombre'], m.get('texto', ''), round(horas, 1), resultado))
     if cambios:
         guardar_db(db)
     if not avisos:
@@ -2391,22 +2382,21 @@ async def revisar_incumplimientos():
     guild = client.get_guild(int(DISCORD_GUILD_ID))
     rol = discord.utils.get(guild.roles, name=ROL_DIRECTIVA_NOMBRE) if guild else None
     mencion_rol = rol.mention if rol else f'@{ROL_DIRECTIVA_NOMBRE}'
-    for discord_id, nombre, texto_anterior, texto_nuevo, horas, resultado in avisos:
-        mensaje = (f'{mencion_rol} **{nombre}** (<@{discord_id}>) llevaba mas de {round(horas)}h sin cumplir su '
-                   f'castigo ("{texto_anterior}") y fue reemplazado automaticamente por uno nuevo: "{texto_nuevo}". '
+    for discord_id, nombre, texto, horas, resultado in avisos:
+        mensaje = (f'{mencion_rol} **{nombre}** (<@{discord_id}>) lleva mas de {round(horas)}h sin cumplir su '
+                   f'castigo ("{texto}"). El castigo sigue pendiente y acumulado, no se reemplaza. '
                    f'Llamado de atencion {resultado["cantidad"]}/{LLAMADOS_ATENCION_MAX}.')
         if resultado['expulsar']:
-            mensaje += f' **{nombre} llego al maximo de llamados de atencion: la Directiva debe expulsarlo con `/eliminar_registro`.**'
+            mensaje += f' **{nombre} llego al maximo de llamados de atencion: la Directiva debe evaluar su expulsion con `/eliminar_registro`.**'
         if canal:
             try:
                 await canal.send(mensaje)
             except Exception:
                 pass
-        aviso_dm = (f'Tu maldicion anterior ("{texto_anterior}") llevaba mas de {round(horas)}h sin cumplirse y fue '
-                    f'reemplazada automaticamente por: "{texto_nuevo}". Cumplela en tu proxima partida. '
-                    f'Llamado de atencion {resultado["cantidad"]}/{LLAMADOS_ATENCION_MAX}.')
+        aviso_dm = (f'Tu castigo pendiente ("{texto}") lleva mas de {round(horas)}h sin cumplirse. Sigue pendiente '
+                    f'y no se reemplaza: cumplelo cuanto antes. Llamado de atencion {resultado["cantidad"]}/{LLAMADOS_ATENCION_MAX}.')
         if resultado['expulsar']:
-            aviso_dm += ' Llegaste al maximo de llamados de atencion: la Directiva procedera a expulsarte del torneo.'
+            aviso_dm += ' Llegaste al maximo de llamados de atencion: la Directiva evaluara tu expulsion del torneo.'
         await enviar_dm_seguro(discord_id, aviso_dm)
 
 @client.event
