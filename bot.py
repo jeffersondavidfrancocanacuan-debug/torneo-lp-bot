@@ -1323,10 +1323,12 @@ async def reglamento(interaction: discord.Interaction):
                    'imposible cumplirlo (ej. te toca un campeon baneado), se cumple en la siguiente que puedas. Prohibido sabotear '
                    'tu propio castigo para volverlo imposible. Jugar partidas ignorando un castigo pendiente es incumplir la norma. '
                    'La Directiva marca el castigo cumplido con `/cumplir_castigo` (elige de una lista cual fue exactamente). '
-                   f'Si un castigo lleva mas de {ALERTA_INCUMPLIMIENTO_HORAS}h sin marcarse como cumplido, NO se reemplaza: se avisa '
-                   'a la Directiva y por DM al jugador para que evalue, y el castigo sigue pendiente y acumulado (nunca desaparece ni '
-                   'se cambia por otro) hasta que la Directiva lo marque cumplido. Los castigos pendientes no expiran solos: siguen '
-                   'acumulados y contando para el maximo de tu puesto hasta que la Directiva los marque como cumplidos.'),
+                   f'Si un castigo lleva mas de {ALERTA_INCUMPLIMIENTO_HORAS}h sin marcarse como cumplido, el castigo original NO '
+                   'se reemplaza (sigue pendiente y acumulado), pero se te suma automaticamente una maldicion nueva aleatoria como '
+                   'penalidad por el incumplimiento, ademas de un llamado de atencion (ver punto 15). Por eso conviene pedirle a la '
+                   'Directiva que marque tus castigos ya cumplidos con `/cumplir_castigo` apenas los cumplas: asi no se te siguen '
+                   'sumando maldiciones automaticas. Los castigos pendientes no expiran solos: siguen acumulados y contando para el '
+                   'maximo de tu puesto hasta que la Directiva los marque como cumplidos.'),
             inline=False)
     embed.add_field(
         name='12. Premios',
@@ -1345,10 +1347,12 @@ async def reglamento(interaction: discord.Interaction):
     embed.add_field(
         name='15. Llamados de atencion y expulsion',
         value=(f'A partir del {FECHA_INICIO_REGLAS_ESTRICTAS}, cada incumplimiento (castigo no cumplido a tiempo o no jugar las '
-               'llamados, el bot avisa a la Directiva para que evalue el caso: la expulsion NUNCA es automatica, siempre es '
-               'una decision y accion manual de la Directiva.'),
+               f'(mas de {ALERTA_INCUMPLIMIENTO_HORAS}h) te suma automaticamente una maldicion nueva aleatoria (ver punto 11): '
+               'pidele a la Directiva que marque tus castigos ya cumplidos con `/cumplir_castigo` para que esto no se acumule. '
+               f'Al llegar a **{LLAMADOS_ATENCION_MAX}** llamados, el bot avisa a la Directiva para que evalue el caso: la '
+               'expulsion NUNCA es automatica, siempre es una decision y accion manual de la Directiva.'),
         inline=False)
-    embed.set_footer(text='Usa /ayuda para ver todos los comandos disponibles. Usa /terminos para ver el glosario completo.')
+        embed.set_footer(text='Usa /ayuda para ver todos los comandos disponibles. Usa /terminos para ver el glosario completo.')
     await interaction.response.send_message(embed=embed)
 
 
@@ -2350,17 +2354,20 @@ async def actualizar_canal():
 @tasks.loop(minutes=30)
 async def revisar_incumplimientos():
     """Revisa si algun castigo (maldicion) lleva mas de ALERTA_INCUMPLIMIENTO_HORAS sin marcarse como
-    cumplido. El castigo NO se reemplaza ni se reinicia: se queda pendiente tal cual y sigue acumulado
-    y contando para el maximo de su puesto hasta que la Directiva lo marque cumplido con
-    /cumplir_castigo. Solo se suma un llamado de atencion al jugador (ver agregar_llamado_atencion) y se
-    avisa UNA SOLA VEZ (bandera 'alertado_incumplimiento') en el canal de maldiciones (mencionando a la
-    Directiva) y por DM al jugador afectado, para que la Directiva decida que hacer. La expulsion nunca
-    es automatica: siempre es decision manual de la Directiva."""
+    cumplido. El castigo original NO se reemplaza: se queda pendiente tal cual y sigue acumulado y
+    contando para el maximo de su puesto hasta que la Directiva lo marque cumplido con /cumplir_castigo.
+    Ademas, por el incumplimiento, se le suma automaticamente al jugador una NUEVA maldicion aleatoria
+    (penalidad por no cumplir a tiempo). Se suma un llamado de atencion (ver agregar_llamado_atencion) y
+    se avisa UNA SOLA VEZ por castigo vencido (bandera 'alertado_incumplimiento') en el canal de
+    maldiciones (mencionando a la Directiva) y por DM al jugador, recordandole pedir a la Directiva que
+    marque sus castigos ya cumplidos con /cumplir_castigo apenas los cumpla, para que no se le sigan
+    sumando maldiciones automaticas. La expulsion nunca es automatica: siempre es decision manual de la
+    Directiva."""
     db = cargar_db()
     cambios = False
     avisos = []
     for puuid, data in jugadores_validos(db).items():
-        for m in data.get('maldiciones', []) or []:
+        for m in list(data.get('maldiciones', []) or []):
             if m.get('cumplido') or m.get('alertado_incumplimiento'):
                 continue
             try:
@@ -2372,8 +2379,15 @@ async def revisar_incumplimientos():
                 continue
             m['alertado_incumplimiento'] = True
             cambios = True
+            nueva = _elegir_castigo_concreto()
+            ahora = str(datetime.datetime.now())
+            data.setdefault('maldiciones', []).append({
+                'tipo': nueva['tipo'], 'texto': nueva['texto'], 'opciones': nueva['opciones'],
+                'elegido': nueva['elegido'], 'de': 'sistema (incumplimiento)', 'fecha': ahora,
+                'cumplido': False, 'reverse': False,
+            })
             resultado = agregar_llamado_atencion(data, f'no cumplio a tiempo el castigo "{m.get("texto", "")}"')
-            avisos.append((data['discord_id'], data['nombre'], m.get('texto', ''), round(horas, 1), resultado))
+            avisos.append((data['discord_id'], data['nombre'], m.get('texto', ''), round(horas, 1), resultado, nueva['texto']))
     if cambios:
         guardar_db(db)
     if not avisos:
@@ -2382,9 +2396,10 @@ async def revisar_incumplimientos():
     guild = client.get_guild(int(DISCORD_GUILD_ID))
     rol = discord.utils.get(guild.roles, name=ROL_DIRECTIVA_NOMBRE) if guild else None
     mencion_rol = rol.mention if rol else f'@{ROL_DIRECTIVA_NOMBRE}'
-    for discord_id, nombre, texto, horas, resultado in avisos:
+    for discord_id, nombre, texto, horas, resultado, texto_nuevo in avisos:
         mensaje = (f'{mencion_rol} **{nombre}** (<@{discord_id}>) lleva mas de {round(horas)}h sin cumplir su '
-                   f'castigo ("{texto}"). El castigo sigue pendiente y acumulado, no se reemplaza. '
+                   f'castigo ("{texto}"). El castigo sigue pendiente y acumulado (no se reemplaza), y por el '
+                   f'incumplimiento se le sumo una maldicion nueva: "{texto_nuevo}". '
                    f'Llamado de atencion {resultado["cantidad"]}/{LLAMADOS_ATENCION_MAX}.')
         if resultado['expulsar']:
             mensaje += f' **{nombre} llego al maximo de llamados de atencion: la Directiva debe evaluar su expulsion con `/eliminar_registro`.**'
@@ -2394,7 +2409,10 @@ async def revisar_incumplimientos():
             except Exception:
                 pass
         aviso_dm = (f'Tu castigo pendiente ("{texto}") lleva mas de {round(horas)}h sin cumplirse. Sigue pendiente '
-                    f'y no se reemplaza: cumplelo cuanto antes. Llamado de atencion {resultado["cantidad"]}/{LLAMADOS_ATENCION_MAX}.')
+                    f'(no se reemplaza), pero por el incumplimiento se te sumo una maldicion nueva: "{texto_nuevo}". '
+                    f'Llamado de atencion {resultado["cantidad"]}/{LLAMADOS_ATENCION_MAX}. Recuerda pedirle a la Directiva '
+                    'que marque tus castigos ya cumplidos con `/cumplir_castigo` apenas los cumplas, para que no se te '
+                    'sigan sumando maldiciones automaticas.')
         if resultado['expulsar']:
             aviso_dm += ' Llegaste al maximo de llamados de atencion: la Directiva evaluara tu expulsion del torneo.'
         await enviar_dm_seguro(discord_id, aviso_dm)
