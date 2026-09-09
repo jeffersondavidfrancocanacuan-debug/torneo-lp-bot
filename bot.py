@@ -1347,12 +1347,13 @@ async def reglamento(interaction: discord.Interaction):
     embed.add_field(
         name='15. Llamados de atencion y expulsion',
         value=(f'A partir del {FECHA_INICIO_REGLAS_ESTRICTAS}, cada incumplimiento (castigo no cumplido a tiempo o no jugar las '
+               f'{JUEGOS_MINIMOS_DIA} partidas diarias) suma un **llamado de atencion**. Ademas, no cumplir un castigo a tiempo '
                f'(mas de {ALERTA_INCUMPLIMIENTO_HORAS}h) te suma automaticamente una maldicion nueva aleatoria (ver punto 11): '
                'pidele a la Directiva que marque tus castigos ya cumplidos con `/cumplir_castigo` para que esto no se acumule. '
                f'Al llegar a **{LLAMADOS_ATENCION_MAX}** llamados, el bot avisa a la Directiva para que evalue el caso: la '
                'expulsion NUNCA es automatica, siempre es una decision y accion manual de la Directiva.'),
         inline=False)
-        embed.set_footer(text='Usa /ayuda para ver todos los comandos disponibles. Usa /terminos para ver el glosario completo.')
+    embed.set_footer(text='Usa /ayuda para ver todos los comandos disponibles. Usa /terminos para ver el glosario completo.')
     await interaction.response.send_message(embed=embed)
 
 
