@@ -1353,14 +1353,14 @@ async def reglamento(interaction: discord.Interaction):
                f'Al llegar a **{LLAMADOS_ATENCION_MAX}** llamados, el bot avisa a la Directiva para que evalue el caso: la '
                'expulsion NUNCA es automatica, siempre es una decision y accion manual de la Directiva.'),
         inline=False)
-        embed.add_field(
+            embed.add_field(
         name='16. Maldiciones pendientes al cierre del torneo',
         value=('Para entrar al podio final hay que terminar TODAS las maldiciones activas: si al cerrarse el torneo '
                'te quedan maldiciones sin cumplir (aunque sigan pendientes por no haber sido marcadas por la Directiva), '
                'no cuentas en la lista de ganadores, sin importar tu puesto en la tabla. La Directiva aplica esta regla '
                'manualmente al revisar quien tiene castigos pendientes antes de anunciar al ganador.'),
         inline=False)
-embed.set_footer(text='Usa /ayuda para ver todos los comandos disponibles. Usa /terminos para ver el glosario completo.')
+    embed.set_footer(text='Usa /ayuda para ver todos los comandos disponibles. Usa /terminos para ver el glosario completo.')
     await interaction.response.send_message(embed=embed)
 
 
