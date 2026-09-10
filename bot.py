@@ -94,7 +94,7 @@ POSTPARTIDA_GRACIA_MINUTOS = 10     # minutos tras terminar una partida en los q
 TORNEO_BLOQUEO_FINAL_HORAS = 48     # ultimas horas del torneo en las que el sistema Blue Shell se desactiva
 DROP_DIARIO_INTERVALO_MIN = 10      # frecuencia de revision de partidas para escudos automaticos
 COOLDOWN_RECEPCION_HORAS = 12       # cooldown fijo (para todos los puestos) antes de poder volver a maldecir a alguien
-ALERTA_INCUMPLIMIENTO_HORAS = 12    # si un castigo lleva mas de esto sin cumplirse, se reemplaza automaticamente por uno nuevo aleatorio (se reinicia el plazo)
+ALERTA_INCUMPLIMIENTO_HORAS = 24    # plazo para cumplir un castigo; si se pasa, se suma una maldicion nueva aleatoria ademas (no reemplaza la pendiente) y un llamado de atencion
 
 
 def cooldown_recepcion_horas(posicion):
