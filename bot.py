@@ -1780,7 +1780,7 @@ async def maldecir(interaction: discord.Interaction, usuario: discord.Member):
     else:
         embed.add_field(name='Efecto', value=efecto['texto'], inline=False)
         cd_destino_txt = f'{COOLDOWN_RECEPCION_HORAS}h de cooldown antes de poder volver a maldecirlo'
-embed.set_footer(text=f'No expira sola: queda activa hasta que la Directiva la marque cumplida - Maximo {max_activas_destino} activas por jugador (referencia, no bloquea) - {cd_destino_txt}')
+        embed.set_footer(text=f'No expira sola: queda activa hasta que la Directiva la marque cumplida - Maximo {max_activas_destino} activas por jugador (referencia, no bloquea) - {cd_destino_txt}')
     canal_destino = canal_maldiciones()
     if canal_destino:
         await canal_destino.send(
