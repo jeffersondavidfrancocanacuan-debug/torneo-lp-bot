@@ -1285,7 +1285,7 @@ value=(f'Fijo de **{COOLDOWN_RECEPCION_HORAS}h** para todos los puestos: no se p
        f'su puesto (el maximo ya no bloquea el lanzamiento, solo sirve de referencia y para activar el Aegis: '
        f'al llenarse el cupo se activa un Aegis de {AEGIS_DURACION_HORAS}h).'),
         inline=False)
-        embed.add_field(
+    embed.add_field(
         name='6. Restricciones de lanzamiento',
         value=('No puedes lanzar una maldicion si estas en una partida en vivo (ya no hay espera tras terminar una partida). '
                f'Las ultimas {TORNEO_BLOQUEO_FINAL_HORAS}h del torneo el sistema Blue Shell se desactiva por completo. '
