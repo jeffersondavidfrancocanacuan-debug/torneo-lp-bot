@@ -102,7 +102,7 @@ def cooldown_recepcion_horas(posicion):
         todos los puestos, incluido el puesto 1. Pasado ese cooldown, se puede volver a maldecir a la misma
         persona aunque ya tenga el maximo de maldiciones activas de su puesto (el maximo por puesto ya no
         bloquea el lanzamiento en /maldecir, solo el cooldown de 12h)."""
-    return COOLDOWN_RECEPCION_HORAS
+        return COOLDOWN_RECEPCION_HORAS
 
 
 def maldicion_max_activas_por_posicion(posicion):
