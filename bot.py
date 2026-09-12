@@ -1271,7 +1271,8 @@ async def reglamento(interaction: discord.Interaction):
                f'Puesto 1 hasta {MALDICION_MAX_ACTIVAS_TOP1}, Puesto 2 hasta {MALDICION_MAX_ACTIVAS_TOP2}, resto hasta '
                f'{MALDICION_MAX_ACTIVAS}. No expiran solas: quedan activas y acumuladas hasta que la Directiva las marque como cumplidas con `/cumplir_castigo`.'),
         inline=False)
-        name='4b. Los 7 castigos posibles (probabilidad real)',
+    embed.add_field(
+                name='4b. Los 7 castigos posibles (probabilidad real)',
         value=('Yuumi obligatorio **11%** - Campeon especifico aleatorio obligatorio **38%** - Sin Flash **11%** - '
                'Autofill/sin rol principal **11%** - Sin botas ni Pies Veloces **11%** - Hechizos cambiados **6%** - '
                'Sin objetos miticos hasta min 15 **6%**.'),
