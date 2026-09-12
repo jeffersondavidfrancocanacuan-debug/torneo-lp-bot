@@ -950,7 +950,7 @@ def calcular_tabla(db):
     for puuid, data in jugadores_validos(db).items():
         if data.get('inactivo'):
             continue
-info = obtener_info_ranked(data['nombre'], data['region'])
+        info = obtener_info_ranked(data['nombre'], data['region'])
         if info is None:
             continue
         lp_ganados = info['lp'] - data['lp_inicial']
