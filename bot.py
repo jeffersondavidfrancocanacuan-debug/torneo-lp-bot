@@ -115,13 +115,6 @@ def maldicion_max_activas_por_posicion(posicion):
         return MALDICION_MAX_ACTIVAS
 
 
-def probabilidad_reverse(posicion):
-    """Probabilidad de que la maldicion rebote hacia quien la lanzo, segun la posicion del objetivo.
-    Cuanto mas abajo este el objetivo, mas facil es que rebote (tirar hacia arriba es mas seguro)."""
-    tabla = {1: 0.20, 2: 0.20, 3: 0.20, 4: 0.20, 5: 0.20}
-    return tabla.get(posicion, 0.20)
-
-
 def posicion_de_jugador(db, puuid):
     """Posicion (1-indexed) del jugador en su categoria (High/Low Elo) segun la tabla actual.
     Devuelve None si no aparece en ninguna tabla (pendiente, sin voz, etc.) -> se trata como 'resto'."""
@@ -250,8 +243,8 @@ CLASES_CAMPEONES = {
                 'Senna', 'Taric', 'Seraphine'],
 }
 
-# Los 7 castigos oficiales del torneo modelo (soloqchallenge.gg), con su probabilidad real de salir
-# UNA VEZ que ya se descarto el Reverse (que se sortea aparte, segun la posicion del objetivo).
+# Los 7 castigos oficiales del torneo modelo (soloqchallenge.gg), con su probabilidad real de salir.
+# Ya no existe el Reverse: el objetivo original siempre es quien debe cumplir el castigo.
 CASTIGOS_OFICIALES = [
     ('yuumi', 11, 'Debes jugar obligatoriamente **Yuumi** en tu proxima partida.'),
     ('campeon_aleatorio', 38, None),
@@ -264,9 +257,8 @@ CASTIGOS_OFICIALES = [
 
 
 def _elegir_castigo_concreto():
-    """Sortea uno de los 7 castigos oficiales (sin reverse) respetando sus probabilidades reales
-    (CASTIGOS_OFICIALES). Se usa tanto para lanzamientos normales como para el reroll automatico de
-    castigos incumplidos y para el castigo concreto que le toca a quien sufre un Reverse."""
+    """Sortea uno de los 7 castigos oficiales respetando sus probabilidades reales (CASTIGOS_OFICIALES).
+    Se usa tanto para lanzamientos normales como para la maldicion automatica que se suma por incumplimiento."""
     tipos = [c[0] for c in CASTIGOS_OFICIALES]
     pesos = [c[1] for c in CASTIGOS_OFICIALES]
     tipo = random.choices(tipos, weights=pesos, k=1)[0]
@@ -284,15 +276,10 @@ def _elegir_castigo_concreto():
     return {'tipo': tipo, 'texto': texto, 'opciones': [], 'elegido': None}
 
 def generar_efecto_maldicion(posicion_objetivo=None):
-    """Devuelve un dict {tipo, texto, opciones, elegido, reverse} representando el efecto de la
-    maldicion: se sortea el Reverse (20% fijo para todos, ver probabilidad_reverse) y, salga o no,
-        se sortea de una vez el castigo concreto de los 7 oficiales (CASTIGOS_OFICIALES) que corresponde
-    cumplir. Si sale Reverse el castigo concreto ya viene resuelto automaticamente: no hace falta
-    ningun paso manual adicional, solo cambia quien lo cumple (ver 'reverse' en el resultado)."""
-    reverse = random.random() < probabilidad_reverse(posicion_objetivo)
-    efecto = _elegir_castigo_concreto()
-    efecto['reverse'] = reverse
-    return efecto
+    """Devuelve un dict {tipo, texto, opciones, elegido} representando el efecto de la maldicion:
+    se sortea directamente el castigo concreto de los 7 oficiales (CASTIGOS_OFICIALES). Ya no existe
+    el Reverse: el objetivo original siempre es quien debe cumplir el castigo."""
+    return _elegir_castigo_concreto()
 
 
 # Sesiones de voz activas en memoria: {discord_id: datetime_de_ultimo_checkpoint}
@@ -1284,8 +1271,7 @@ async def reglamento(interaction: discord.Interaction):
                f'Puesto 1 hasta {MALDICION_MAX_ACTIVAS_TOP1}, Puesto 2 hasta {MALDICION_MAX_ACTIVAS_TOP2}, resto hasta '
                f'{MALDICION_MAX_ACTIVAS}. No expiran solas: quedan activas y acumuladas hasta que la Directiva las marque como cumplidas con `/cumplir_castigo`.'),
         inline=False)
-    embed.add_field(
-        name='4b. Los 7 castigos posibles (probabilidad real, tras descartar Reverse)',
+        name='4b. Los 7 castigos posibles (probabilidad real)',
         value=('Yuumi obligatorio **11%** - Campeon especifico aleatorio obligatorio **38%** - Sin Flash **11%** - '
                'Autofill/sin rol principal **11%** - Sin botas ni Pies Veloces **11%** - Hechizos cambiados **6%** - '
                'Sin objetos miticos hasta min 15 **6%**.'),
@@ -1298,72 +1284,66 @@ value=(f'Fijo de **{COOLDOWN_RECEPCION_HORAS}h** para todos los puestos: no se p
        f'su puesto (el maximo ya no bloquea el lanzamiento, solo sirve de referencia y para activar el Aegis: '
        f'al llenarse el cupo se activa un Aegis de {AEGIS_DURACION_HORAS}h).'),
         inline=False)
-    embed.add_field(
-            name='6. Reverse',
-            value=('Probabilidad fija de **20%** para todos, sin importar el puesto del objetivo. '
-                   'Si sale reverse no tienes que hacer nada: el castigo concreto ya viene resuelto '
-                   'automaticamente y lo cumple quien lanzo la maldicion, no el objetivo.'),
-            inline=False)
-    embed.add_field(
-        name='7. Restricciones de lanzamiento',
+        embed.add_field(
+        name='6. Restricciones de lanzamiento',
         value=('No puedes lanzar una maldicion si estas en una partida en vivo (ya no hay espera tras terminar una partida). '
                f'Las ultimas {TORNEO_BLOQUEO_FINAL_HORAS}h del torneo el sistema Blue Shell se desactiva por completo. '
                'Se revisa a mano y queda registrada la hora exacta de cada lanzamiento.'),
         inline=False)
     embed.add_field(
-        name='8. Como conseguir una Blue Shell',
+        name='7. Como conseguir una Blue Shell',
         value=('Pentakill (2), Cuadrakill, 22 kills, 30 asistencias, racha de 6 victorias, comeback de 7.000 de oro, '
                'KDA perfecto superior a 20, ganar una partida de 40+ min, cada 5 victorias con un campeon distinto, '
                'cada 5 victorias jugando con castigo, o ganarle a alguien con una Blue Shell (se la robas). '
                'Se detecta automaticamente tras cada partida. La Directiva tambien puede otorgarlas con `/otorgar_escudo`.'),
         inline=False)
     embed.add_field(
-        name='9. Drop diario',
+        name='8. Drop diario',
         value='Desactivado por defecto. Si se activa, la Directiva lanza un reto sencillo y se lo lleva el primero que lo cumpla (`/reclamar_reto` + confirmacion de la Directiva).',
         inline=False)
     embed.add_field(
-        name='10. Aegis (proteccion)',
+        name='9. Aegis (proteccion)',
         value=(f'Si un jugador llena su maximo de maldiciones activas segun su puesto (9/6/3), se activa '
                f'automaticamente un Aegis de {AEGIS_DURACION_HORAS}h que lo protege de nuevas maldiciones.'),
         inline=False)
     embed.add_field(
-            name='11. Cumplimiento de castigos',
+        name='10. Cumplimiento de castigos',
             value=('Se cumple en la siguiente partida posible. Excepciones: si ya habias aceptado la cola cuando llego, o si es '
                    'imposible cumplirlo (ej. te toca un campeon baneado), se cumple en la siguiente que puedas. Prohibido sabotear '
                    'tu propio castigo para volverlo imposible. Jugar partidas ignorando un castigo pendiente es incumplir la norma. '
                    'La Directiva marca el castigo cumplido con `/cumplir_castigo` (elige de una lista cual fue exactamente). '
                    f'Si un castigo lleva mas de {ALERTA_INCUMPLIMIENTO_HORAS}h sin marcarse como cumplido, el castigo original NO '
                    'se reemplaza (sigue pendiente y acumulado), pero se te suma automaticamente una maldicion nueva aleatoria como '
-                   'penalidad por el incumplimiento, ademas de un llamado de atencion (ver punto 15). Por eso conviene pedirle a la '
+                   'penalidad por el incumplimiento, ademas de un llamado de atencion (ver 14). Por eso conviene pedirle a la '
                    'Directiva que marque tus castigos ya cumplidos con `/cumplir_castigo` apenas los cumplas: asi no se te siguen '
                    'sumando maldiciones automaticas. Los castigos pendientes no expiran solos: siguen acumulados y contando para el '
                    'maximo de tu puesto hasta que la Directiva los marque como cumplidos.'),
             inline=False)
     embed.add_field(
-        name='12. Premios',
+        name='11. Premios',
         value=(f'Ganador general: **${PREMIO_GANADOR_USD} USD** en efectivo + insignia/rol de honor en el servidor. '
                'Tambien se otorgan insignias por logros (Cima, Podio, Ascenso, hitos de puntos, etc.).'),
         inline=False)
     embed.add_field(
-        name='13. Conducta',
+        name='12. Conducta',
         value='Prohibido el uso de cuentas ajenas, boosting externo, o evadir la verificacion de voz. La Directiva puede descalificar por incumplimiento.',
         inline=False)
     embed.add_field(
-        name='14. Partidas diarias obligatorias',
+        name='13. Partidas diarias obligatorias',
         value=(f'A partir del {FECHA_INICIO_REGLAS_ESTRICTAS}, todos deben jugar minimo **{JUEGOS_MINIMOS_DIA} partidas de SoloQ por dia**. '
-               'Se revisa automaticamente cada madrugada con la API de Riot. No cumplir cuenta como un llamado de atencion (ver punto 15).'),
+        'Se revisa automaticamente cada madrugada con la API de Riot. No cumplir cuenta como un llamado de atencion (ver punto 14).'),
         inline=False)
     embed.add_field(
-        name='15. Llamados de atencion y expulsion',
+        name='14. Llamados de atencion y expulsion',
         value=(f'A partir del {FECHA_INICIO_REGLAS_ESTRICTAS}, cada incumplimiento (castigo no cumplido a tiempo o no jugar las '
                f'{JUEGOS_MINIMOS_DIA} partidas diarias) suma un **llamado de atencion**. Ademas, no cumplir un castigo a tiempo '
-               f'(mas de {ALERTA_INCUMPLIMIENTO_HORAS}h) te suma automaticamente una maldicion nueva aleatoria (ver punto 11): '
+        f'(mas de {ALERTA_INCUMPLIMIENTO_HORAS}h) te suma automaticamente una maldicion nueva aleatoria (ver punto 10): '
                'pidele a la Directiva que marque tus castigos ya cumplidos con `/cumplir_castigo` para que esto no se acumule. '
                f'Al llegar a **{LLAMADOS_ATENCION_MAX}** llamados, el bot avisa a la Directiva para que evalue el caso: la '
                'expulsion NUNCA es automatica, siempre es una decision y accion manual de la Directiva.'),
         inline=False)
     embed.add_field(
-        name='16. Maldiciones pendientes al cierre del torneo',
+        name='15. Maldiciones pendientes al cierre del torneo',
         value=('Para entrar al podio final hay que terminar TODAS las maldiciones activas: si al cerrarse el torneo '
                'te quedan maldiciones sin cumplir (aunque sigan pendientes por no haber sido marcadas por la Directiva), '
                'no cuentas en la lista de ganadores, sin importar tu puesto en la tabla. La Directiva aplica esta regla '
@@ -1387,12 +1367,11 @@ async def terminos(interaction: discord.Interaction):
         inline=False)
     embed.add_field(
         name='Maldicion (Castigo)',
-        value=('Efecto aleatorio que recibe un jugador cuando alguien usa `/maldecir` contra el. Es uno de los 10 '
-               'castigos oficiales del torneo modelo (sin tus 3 campeones mas jugados, Yuumi obligatorio, campeon '
-               'aleatorio, sin Flash, Autofill, sin botas, hechizos cambiados, sin pociones/pinks, sin objetos '
-               'miticos hasta min 15, o clase de campeon aleatoria) o un Reverse. Usa `/reglamento` para ver el '
-               'listado completo con los porcentajes reales. Es diferente de un "castigo manual" (`/castigar`), '
-               'aunque ambos restan puntos o imponen una condicion.'),
+        value=('Efecto aleatorio que recibe un jugador cuando alguien usa `/maldecir` contra el. Es uno de los 7 '
+                                                     'castigos oficiales del torneo modelo (Yuumi obligatorio, campeon aleatorio, sin Flash, Autofill, '
+               'sin botas, hechizos cambiados, o sin objetos miticos hasta min 15). Usa `/reglamento` para ver el '
+                                  'listado completo con los porcentajes reales. Es diferente de un "castigo manual" (`/castigar`), '
+                                  'aunque ambos restan puntos o imponen una condicion.'),
         inline=False)
     embed.add_field(
         name='Pendiente / Cumplido',
@@ -1405,11 +1384,7 @@ value=(f'Espera fija de {COOLDOWN_RECEPCION_HORAS}h antes de poder volver a mald
        f'Pasado ese tiempo se le puede volver a maldecir aunque ya tenga el maximo de su puesto (el maximo ya '
        f'no bloquea, solo activa el Aegis de {AEGIS_DURACION_HORAS}h al llenarse el cupo).'),
         inline=False)
-    embed.add_field(
-        name='Reverse',
-        value='Rebote de la maldicion hacia quien la lanzo. La probabilidad depende de la posicion del objetivo (1% a 15%, mas seguro tirar hacia arriba).',
-        inline=False)
-    embed.add_field(
+        embed.add_field(
         name='Aegis (proteccion)',
         value=(f'Escudo TEMPORAL distinto del Escudo Azul: se activa automaticamente por {AEGIS_DURACION_HORAS}h cuando '
                f'un jugador llena su maximo de maldiciones activas segun su puesto (9/6/3). Mientras dura, nadie '
@@ -1717,9 +1692,6 @@ async def maldecir(interaction: discord.Interaction, usuario: discord.Member):
 
     efecto = generar_efecto_maldicion(pos_objetivo)
     destino_puuid, destino_data = target_puuid, target_data
-    if efecto.get('reverse'):
-        destino_puuid, destino_data = caster_puuid, caster_data
-
     if aegis_activo(destino_data):
         await interaction.followup.send(
             f'La maldicion iba a rebotar hacia **{destino_data["nombre"]}**, pero tiene un Aegis activo y la maldicion se disipa. Se consumio tu escudo igualmente.')
@@ -1747,7 +1719,7 @@ async def maldecir(interaction: discord.Interaction, usuario: discord.Member):
     destino_data['ultima_maldicion_recibida'] = ahora
     destino_data.setdefault('maldiciones', []).append({
         'tipo': efecto['tipo'], 'texto': efecto['texto'], 'opciones': efecto['opciones'],
-        'elegido': efecto['elegido'], 'de': caster_id, 'fecha': ahora, 'cumplido': False, 'reverse': efecto.get('reverse', False),
+        'elegido': efecto['elegido'], 'de': caster_id, 'fecha': ahora, 'cumplido': False, 'reverse': False,
     })
 
     # Aegis: si el destino acumula demasiados castigos activos sin cumplir, se protege temporalmente.
@@ -1770,7 +1742,7 @@ async def maldecir(interaction: discord.Interaction, usuario: discord.Member):
     embed = discord.Embed(title='Maldicion lanzada!', color=0x9b59b6, timestamp=datetime.datetime.now())
     embed.add_field(name='Lanzada por', value=f'<@{caster_id}>', inline=True)
     embed.add_field(name='Objetivo original', value=f'**{target_data["nombre"]}**', inline=True)
-    embed.add_field(name='Objetivo final', value=f'**{destino_data["nombre"]}**' + (' (REVERSE)' if efecto.get('reverse') else ''), inline=True)
+    embed.add_field(name='Objetivo final', value=f'**{destino_data["nombre"]}**', inline=True)
     if efecto['tipo'] == 'campeon_aleatorio':
         embed.add_field(name='Efecto', value=efecto['texto'], inline=False)
         embed.set_thumbnail(url=icono_campeon(efecto['elegido']))
