@@ -1385,7 +1385,7 @@ value=(f'Espera fija de {COOLDOWN_RECEPCION_HORAS}h antes de poder volver a mald
        f'Pasado ese tiempo se le puede volver a maldecir aunque ya tenga el maximo de su puesto (el maximo ya '
        f'no bloquea, solo activa el Aegis de {AEGIS_DURACION_HORAS}h al llenarse el cupo).'),
         inline=False)
-        embed.add_field(
+    embed.add_field(
         name='Aegis (proteccion)',
         value=(f'Escudo TEMPORAL distinto del Escudo Azul: se activa automaticamente por {AEGIS_DURACION_HORAS}h cuando '
                f'un jugador llena su maximo de maldiciones activas segun su puesto (9/6/3). Mientras dura, nadie '
