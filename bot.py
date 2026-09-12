@@ -98,9 +98,11 @@ ALERTA_INCUMPLIMIENTO_HORAS = 24    # plazo para cumplir un castigo; si se pasa,
 
 
 def cooldown_recepcion_horas(posicion):
-        """Cooldown (horas) antes de poder volver a maldecir a alguien: fijo para todos los puestos,
-        incluido el puesto 1 (ya no tiene excepcion de 'sin cooldown')."""
-        return 0  # cooldown eliminado: los castigos se acumulan hasta el maximo por puesto
+        """Cooldown (horas) antes de poder volver a maldecir a alguien: fijo (COOLDOWN_RECEPCION_HORAS) para
+        todos los puestos, incluido el puesto 1. Pasado ese cooldown, se puede volver a maldecir a la misma
+        persona aunque ya tenga el maximo de maldiciones activas de su puesto (el maximo por puesto ya no
+        bloquea el lanzamiento en /maldecir, solo el cooldown de 12h)."""
+    return COOLDOWN_RECEPCION_HORAS
 
 
 def maldicion_max_activas_por_posicion(posicion):
@@ -316,7 +318,7 @@ JUGADORES_HEADERS = [
     'elo', 'estado', 'fecha_registro', 'bonus_total', 'castigos_total', 'logros',
     'tiempo_voz_min', 'elo_previo', 'escudos', 'maldiciones', 'ultimo_escudo_uso', 'escudo_hasta',
     'ultima_maldicion_recibida', 'ultimo_match_procesado', 'racha_victorias',
-    'campeones_ganados', 'victorias_con_castigo_contador',
+    'campeones_ganados', 'victorias_con_castigo_contador', 'inactivo',
 ]
 META_HEADERS = ['clave', 'valor']
 REGISTROS_HEADERS = ['tipo', 'usuario', 'nombre', 'puntos', 'motivo', 'fecha']
@@ -434,6 +436,7 @@ def _cargar_db_desde_sheets():
                 'racha_victorias': int(float(f.get('racha_victorias') or 0)),
                 'campeones_ganados': campeones_ganados,
                 'victorias_con_castigo_contador': int(float(f.get('victorias_con_castigo_contador') or 0)),
+                'inactivo': str(f.get('inactivo') or '').strip().lower() in ('1', 'true', 'si', 'sí'),
             }
         meta_ws = _get_or_create_worksheet('meta', META_HEADERS)
         for fila in _con_reintentos(lambda: meta_ws.get_all_records(numericise_ignore=['all'])):
@@ -945,7 +948,9 @@ def calcular_tabla(db):
             return _tabla_cache
     high, low, pendientes, sin_voz = [], [], [], []
     for puuid, data in jugadores_validos(db).items():
-        info = obtener_info_ranked(data['nombre'], data['region'])
+        if data.get('inactivo'):
+            continue
+info = obtener_info_ranked(data['nombre'], data['region'])
         if info is None:
             continue
         lp_ganados = info['lp'] - data['lp_inicial']
@@ -1287,7 +1292,11 @@ async def reglamento(interaction: discord.Interaction):
         inline=False)
     embed.add_field(
         name='5. Cooldown de recepcion',
-        value=f'Eliminado: las maldiciones se acumulan sin espera hasta el maximo del puesto. Al llenarse el cupo se activa un Aegis de {AEGIS_DURACION_HORAS}h.',
+value=(f'Fijo de **{COOLDOWN_RECEPCION_HORAS}h** para todos los puestos: no se puede volver a maldecir a la '
+       f'misma persona antes de que pasen esas {COOLDOWN_RECEPCION_HORAS}h desde la ultima maldicion que recibio. '
+       f'Pasado ese cooldown, se le puede volver a maldecir aunque ya tenga el maximo de maldiciones activas de '
+       f'su puesto (el maximo ya no bloquea el lanzamiento, solo sirve de referencia y para activar el Aegis: '
+       f'al llenarse el cupo se activa un Aegis de {AEGIS_DURACION_HORAS}h).'),
         inline=False)
     embed.add_field(
             name='6. Reverse',
@@ -1392,7 +1401,9 @@ async def terminos(interaction: discord.Interaction):
         inline=False)
     embed.add_field(
         name='Cooldown de recepcion',
-        value=f'Ya no existe: se pueden recibir maldiciones seguidas hasta llenar el maximo del puesto; al llenarse se activa el Aegis de {AEGIS_DURACION_HORAS}h.',
+value=(f'Espera fija de {COOLDOWN_RECEPCION_HORAS}h antes de poder volver a maldecir a la misma persona. '
+       f'Pasado ese tiempo se le puede volver a maldecir aunque ya tenga el maximo de su puesto (el maximo ya '
+       f'no bloquea, solo activa el Aegis de {AEGIS_DURACION_HORAS}h al llenarse el cupo).'),
         inline=False)
     embed.add_field(
         name='Reverse',
@@ -1550,9 +1561,10 @@ async def ayuda(interaction: discord.Interaction):
                f'KDA perfecto, victorias largas, etc.) o si la Directiva las otorga, maximo {ESCUDOS_MAX_INVENTARIO} en inventario. '
                f'Usa `/maldecir` para gastar uno. Maximo de maldiciones activas por victima segun su puesto (Puesto 1: '
                f'{MALDICION_MAX_ACTIVAS_TOP1}, Puesto 2: {MALDICION_MAX_ACTIVAS_TOP2}, resto: {MALDICION_MAX_ACTIVAS}). '
-               f'Sin cooldown de recepcion: los castigos se acumulan hasta el maximo del puesto y al llenarse se activa el Aegis. '
+f'Cooldown de recepcion de {COOLDOWN_RECEPCION_HORAS}h: pasado ese tiempo se puede volver a maldecir a la '
+            f'misma persona aunque ya este al maximo de su puesto (el maximo solo activa el Aegis al llenarse el cupo). '
                f'Usa `/terminos` o `/reglamento` para el detalle completo.'),
-        inline=False
+       inline=False
     )
     embed.add_field(
         name='Web',
@@ -1716,13 +1728,11 @@ async def maldecir(interaction: discord.Interaction, usuario: discord.Member):
         guardar_db(db)
         return
 
+    # El maximo de maldiciones activas por puesto ya NO bloquea el lanzamiento: una vez pasado el cooldown
+        # de recepcion (COOLDOWN_RECEPCION_HORAS), se puede volver a maldecir a cualquiera aunque este "al maximo".  
+    # El maximo por puesto se sigue usando solo para activar el Aegis al llenarse el cupo (ver mas abajo).
     pos_destino = posicion_de_jugador(db, destino_puuid)
     max_activas_destino = maldicion_max_activas_por_posicion(pos_destino)
-    if len(maldiciones_activas_de(destino_data)) >= max_activas_destino:
-        await interaction.followup.send(
-            f'**{destino_data["nombre"]}** ya tiene el maximo de {max_activas_destino} maldiciones activas ahora mismo. '
-            f'Intenta con otro objetivo o espera a que la Directiva marque alguna como cumplida (no expiran solas).')
-        return
 
     if False:  # (desactivado) la maestria de Riot mezcla todas las colas, no solo SoloQ, y salia mal la info
         top3 = await top_3_campeones_mas_jugados(destino_puuid, destino_data.get('region'))
@@ -1769,8 +1779,8 @@ async def maldecir(interaction: discord.Interaction, usuario: discord.Member):
         embed.set_thumbnail(url=icono_campeon('Yuumi'))
     else:
         embed.add_field(name='Efecto', value=efecto['texto'], inline=False)
-        cd_destino_txt = 'sin cooldown de recepcion'
-        embed.set_footer(text=f'No expira sola: queda activa hasta que la Directiva la marque cumplida - Maximo {max_activas_destino} activas por jugador - El objetivo original tenia {cd_destino_txt}')
+        cd_destino_txt = f'{COOLDOWN_RECEPCION_HORAS}h de cooldown antes de poder volver a maldecirlo'
+embed.set_footer(text=f'No expira sola: queda activa hasta que la Directiva la marque cumplida - Maximo {max_activas_destino} activas por jugador (referencia, no bloquea) - {cd_destino_txt}')
     canal_destino = canal_maldiciones()
     if canal_destino:
         await canal_destino.send(
@@ -1945,6 +1955,33 @@ async def eliminar_registro(interaction: discord.Interaction, usuario: discord.M
                 f'Ya puede usar `/registrar` de nuevo con su nueva cuenta.')
             return
     await interaction.followup.send(f'{usuario.mention} no tiene ningun registro activo en el torneo.')
+@tree.command(name='marcar_inactivo', description='(Directiva) Quita a un jugador de la tabla/ranking por inactividad SIN borrar su registro')
+@app_commands.describe(usuario='Jugador a marcar', estado='inactivo para quitarlo de la tabla, activo para devolverlo')
+@app_commands.choices(estado=[
+    app_commands.Choice(name='Inactivo (fuera de la tabla)', value='inactivo'),
+    app_commands.Choice(name='Activo (vuelve a la tabla)', value='activo'),
+])
+async def marcar_inactivo(interaction: discord.Interaction, usuario: discord.Member, estado: app_commands.Choice[str]):
+    if not await requiere_directiva(interaction):
+        return
+    await interaction.response.defer()
+    db = cargar_db()
+    for puuid, data in jugadores_validos(db).items():
+        if data.get('discord_id') == str(usuario.id):
+            data['inactivo'] = (estado.value == 'inactivo')
+            guardar_db(db, forzar=True)
+            if data['inactivo']:
+                await interaction.followup.send(
+                    f'**{data["nombre"]}** ({usuario.mention}) quedo marcado como **inactivo**: ya no aparece en la '
+                    f'tabla/ranking web, pero conserva su registro, castigos, escudos y logros intactos. Se le puede '
+                    f'reactivar en cualquier momento con `/marcar_inactivo estado:Activo`.')
+            else:
+                await interaction.followup.send(
+                    f'**{data["nombre"]}** ({usuario.mention}) quedo marcado como **activo** de nuevo: vuelve a '
+                    f'aparecer en la tabla/ranking web.')
+            return
+    await interaction.followup.send(f'{usuario.mention} no tiene ningun registro activo en el torneo.')
+
 
 
 @tree.command(name='iniciar_torneo', description='(Directiva) Inicia oficialmente el torneo y reinicia el progreso de pruebas')
