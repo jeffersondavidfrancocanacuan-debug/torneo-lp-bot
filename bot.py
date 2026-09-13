@@ -697,8 +697,26 @@ def aegis_restante_horas(data):
         return 0
     return max((fecha - datetime.datetime.now()).total_seconds() / 3600, 0)
 
+def aegis_bloquea(db, puuid, data):
+    """El Aegis solo sigue bloqueando maldiciones si ademas de estar vigente en el tiempo, el jugador
+    sigue en o por encima del cupo de maldiciones activas de SU PUESTO ACTUAL. Si subio de puesto
+    (ej. de 3ro a 2do) y el cupo mas alto le da margen, el Aegis se desactiva aunque el temporizador
+    no haya expirado, para que puedan volver a maldecirlo."""
+    if not aegis_activo(data):
+        return False
+    pos = posicion_de_jugador(db, puuid)
+    max_activas = maldicion_max_activas_por_posicion(pos)
+    if len(maldiciones_activas_de(data)) >= max_activas:
+        return True
+    data['escudo_hasta'] = None
+    guardar_db(db)
+    return False
+
 
 # ------------------- RIOT API -------------------
+
+
+
 
 def obtener_info_ranked(riot_id, region):
     """riot_id con formato 'Nombre#TAG'. Usa account-v1 + league-v4 by-puuid.
@@ -998,6 +1016,11 @@ def calcular_tabla(db):
             low.append(jugador)
     high.sort(key=lambda x: x['total'], reverse=True)
     low.sort(key=lambda x: x['total'], reverse=True)
+    for lista in (high, low):
+        for i, j in enumerate(lista, 1):
+            max_activas_i = maldicion_max_activas_por_posicion(i)
+            if j['aegis_activo'] and len(j['maldiciones_lista']) < max_activas_i:
+                j['aegis_activo'] = False
     resultado = (high, low, pendientes, sin_voz)
     with _tabla_cache_lock:
         _tabla_cache = resultado
@@ -1618,7 +1641,7 @@ async def escudos(interaction: discord.Interaction):
                 except Exception:
                     pass
             proteccion_txt = f'Protegido {round(restante_recepcion, 1)}h mas (cooldown de recepcion)' if restante_recepcion > 0 else f'Sin proteccion activa (cooldown de recepcion segun tu posicion: {cd_txt})'
-            aegis_txt = f'Activo - {round(aegis_restante_horas(data), 1)}h restantes (nadie puede maldecirte)' if aegis_activo(data) else 'Inactivo'
+            aegis_txt = f'Activo - {round(aegis_restante_horas(data), 1)}h restantes (nadie puede maldecirte)' if aegis_bloquea(db, puuid, data) else 'Inactivo'
             await interaction.followup.send(
                 f'**{data["nombre"]}**\n'
                 f'Escudos Azules disponibles: **{data.get("escudos", 0)}/{ESCUDOS_MAX_INVENTARIO}**\n'
@@ -1658,7 +1681,7 @@ async def maldecir(interaction: discord.Interaction, usuario: discord.Member):
     if target_data is None or target_data.get('estado') != 'aprobado':
         await interaction.followup.send('Ese jugador no esta registrado/aprobado en el torneo.')
         return
-    if aegis_activo(target_data):
+    if aegis_bloquea(db, target_puuid, target_data):
         await interaction.followup.send(
             f'**{target_data["nombre"]}** tiene un Aegis activo ({round(aegis_restante_horas(target_data), 1)}h restantes) y no puede ser maldecido.')
         return
@@ -1695,7 +1718,7 @@ async def maldecir(interaction: discord.Interaction, usuario: discord.Member):
 
     efecto = generar_efecto_maldicion(pos_objetivo)
     destino_puuid, destino_data = target_puuid, target_data
-    if aegis_activo(destino_data):
+    if aegis_bloquea(db, destino_puuid, destino_data):
         await interaction.followup.send(
             f'La maldicion iba a rebotar hacia **{destino_data["nombre"]}**, pero tiene un Aegis activo y la maldicion se disipa. Se consumio tu escudo igualmente.')
         caster_data['escudos'] = caster_data.get('escudos', 0) - 1
