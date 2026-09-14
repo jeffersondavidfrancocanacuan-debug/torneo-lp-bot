@@ -3108,7 +3108,7 @@ def home():
     if db.get('torneo_iniciado'):
         try:
             inicio = datetime.datetime.fromisoformat(db.get('inicio_torneo'))
-            fin_torneo_iso = (inicio + datetime.timedelta(days=DURACION_TORNEO)).isoformat()
+            fin_torneo_iso = (inicio + datetime.timedelta(days=DURACION_TORNEO)).isoformat() + 'Z'
         except Exception:
             fin_torneo_iso = None
     particulas = [
