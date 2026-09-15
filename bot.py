@@ -1310,22 +1310,22 @@ async def otorgar_insignias_finales(interaction, db):
         j = premios.get(clave)
         if j:
             lineas_insignias.append(f"{nombre}: **{j['nombre']}** (<@{j['discord_id']}>) - {j.get('_valor', '')}")
-            if lineas_insignias:
-            bloques = []
-            bloque_actual = []
-            largo_actual = 0
-            for linea in lineas_insignias:
-                if largo_actual + len(linea) + 1 > 1000 and bloque_actual:
-                    bloques.append(bloque_actual)
-                    bloque_actual = []
-                    largo_actual = 0
-                bloque_actual.append(linea)
-                largo_actual += len(linea) + 1
-            if bloque_actual:
+    if lineas_insignias:
+        bloques = []
+        bloque_actual = []
+        largo_actual = 0
+        for linea in lineas_insignias:
+            if largo_actual + len(linea) + 1 > 1000 and bloque_actual:
                 bloques.append(bloque_actual)
-            for idx, bloque in enumerate(bloques):
-                sufijo = f' ({idx + 1}/{len(bloques)})' if len(bloques) > 1 else ''
-                embed.add_field(name=f'Insignias especiales ({len(lineas_insignias)}){sufijo}', value='\n'.join(bloque), inline=False)
+                bloque_actual = []
+                largo_actual = 0
+            bloque_actual.append(linea)
+            largo_actual += len(linea) + 1
+        if bloque_actual:
+            bloques.append(bloque_actual)
+        for idx, bloque in enumerate(bloques):
+            sufijo = f' ({idx + 1}/{len(bloques)})' if len(bloques) > 1 else ''
+            embed.add_field(name=f'Insignias especiales ({len(lineas_insignias)}){sufijo}', value='\n'.join(bloque), inline=False)
     if combinados:
         menciones = ' '.join(f"<@{j['discord_id']}>" for j in combinados)
         if len(menciones) > 1024:
