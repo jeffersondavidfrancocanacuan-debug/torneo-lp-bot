@@ -24,6 +24,7 @@ import json
 import os
 import time
 import random
+import itertools
 import datetime
 from threading import Lock
 
@@ -267,23 +268,29 @@ async def cola(interaction: discord.Interaction):
 
 
 def _balancear_equipos(jugadores):
-    """Recibe una lista de 10 dicts (con elo y roles) y devuelve (equipo_a, equipo_b) balanceados
-    por elo total, probando combinaciones al azar (Monte Carlo simplificado, suficiente para 10)."""
-    mejor_diff = None
-    mejor_split = None
+    """Recibe una lista de 10 dicts (con elo y roles) de la gente disponible (la que esta en cola)
+    y devuelve (equipo_a, equipo_b) balanceados por elo total.
+
+    En vez de probar combinaciones al azar (que puede no encontrar la mejor), se prueban las 126
+    particiones unicas posibles de 10 en dos grupos de 5 (fijando siempre al jugador 0 en un lado
+    para no contar cada particion dos veces) y se queda con la de menor diferencia de elo. Si hay
+    varias igual de parejas, elige una al azar entre esas para que no siempre salga la misma
+    combinacion con el mismo grupo de 10 personas."""
     indices = list(range(10))
-    for _ in range(2000):
-        random.shuffle(indices)
-        a_idx, b_idx = indices[:5], indices[5:]
+    mejor_diff = None
+    mejores_splits = []
+    for combo in itertools.combinations(indices[1:], 4):
+        a_idx = (0,) + combo
+        b_idx = tuple(i for i in indices if i not in a_idx)
         elo_a = sum(jugadores[i]['elo'] for i in a_idx)
         elo_b = sum(jugadores[i]['elo'] for i in b_idx)
         diff = abs(elo_a - elo_b)
         if mejor_diff is None or diff < mejor_diff:
             mejor_diff = diff
-            mejor_split = (a_idx[:], b_idx[:])
-        if mejor_diff == 0:
-            break
-    a_idx, b_idx = mejor_split
+            mejores_splits = [(a_idx, b_idx)]
+        elif diff == mejor_diff:
+            mejores_splits.append((a_idx, b_idx))
+    a_idx, b_idx = random.choice(mejores_splits)
     return [jugadores[i] for i in a_idx], [jugadores[i] for i in b_idx]
 
 
@@ -361,6 +368,126 @@ async def armar_equipos(interaction: discord.Interaction):
 ULTIMO_EQUIPOS = {}  # guild_id -> {'equipo_a': [(jugador, rol, autofill)...], 'equipo_b': [...], 'reportado': bool}
 
 ROL_A_HEADER = {'Top': 'rol_top', 'Jungla': 'rol_jungla', 'Mid': 'rol_mid', 'ADC': 'rol_adc', 'Support': 'rol_support'}
+
+
+# ---------------------------------------------------------------------------
+# Armado manual de equipos (por si alguien quiere armarlos a mano en vez de /armar_equipos)
+# ---------------------------------------------------------------------------
+
+MANUAL_DRAFTS = {}  # guild_id -> {'A': {rol: {discord_id, nombre, elo, ...}}, 'B': {...}}
+
+
+def _draft_vacio():
+    return {'A': {}, 'B': {}}
+
+
+@tree.command(name='manual_iniciar', description='Empieza a armar los equipos a mano (borra cualquier borrador anterior)')
+async def manual_iniciar(interaction: discord.Interaction):
+    guild_id = str(interaction.guild_id)
+    MANUAL_DRAFTS[guild_id] = _draft_vacio()
+    await interaction.response.send_message(
+        'Borrador de equipos manuales iniciado. Anda llenando los 10 cupos (2 equipos x 5 lineas) '
+        'con /manual_asignar. Cuando esten los 10, usa /manual_confirmar.', ephemeral=True)
+
+
+@tree.command(name='manual_asignar', description='Asigna a mano un jugador a un equipo y linea')
+@app_commands.describe(
+    equipo='Equipo A o B', rol='Linea a asignar', jugador='El jugador',
+    riot_id='Riot ID del jugador (Nombre#TAG), opcional, para calcular su elo real',
+    region='Region del jugador, obligatorio si pones riot_id',
+)
+@app_commands.choices(
+    equipo=[app_commands.Choice(name='Equipo A', value='A'), app_commands.Choice(name='Equipo B', value='B')],
+    rol=[app_commands.Choice(name=r, value=r) for r in ROLES_LOL],
+)
+async def manual_asignar(interaction: discord.Interaction, equipo: app_commands.Choice[str],
+                          rol: app_commands.Choice[str], jugador: discord.Member,
+                          riot_id: str = None, region: str = None):
+    guild_id = str(interaction.guild_id)
+    draft = MANUAL_DRAFTS.setdefault(guild_id, _draft_vacio())
+
+    elo_num, nombre = 0, jugador.display_name
+    if riot_id and region:
+        await interaction.response.defer(ephemeral=True)
+        info = obtener_info_ranked(riot_id, region)
+        if info:
+            elo_num, nombre = info['elo_num'], info['nombre']
+        enviar = interaction.followup.send
+    else:
+        enviar = interaction.response.send_message
+
+    # si ya estaba puesto en otro cupo, lo sacamos de ahi primero
+    for eq in ('A', 'B'):
+        for r in list(draft[eq].keys()):
+            if draft[eq][r]['discord_id'] == str(jugador.id):
+                del draft[eq][r]
+
+    draft[equipo.value][rol.value] = {
+        'discord_id': str(jugador.id), 'nombre': nombre, 'elo': elo_num,
+        'rol_principal': rol.value, 'rol_secundario1': '', 'rol_secundario2': '',
+    }
+    total = sum(len(draft[eq]) for eq in ('A', 'B'))
+    await enviar(f'{jugador.display_name} puesto en **Equipo {equipo.value} - {rol.value}**. '
+                 f'Van {total}/10. Cuando esten los 10, usa /manual_confirmar.', ephemeral=True)
+
+
+@tree.command(name='manual_ver', description='Ver el borrador actual de equipos manuales')
+async def manual_ver(interaction: discord.Interaction):
+    guild_id = str(interaction.guild_id)
+    draft = MANUAL_DRAFTS.get(guild_id, _draft_vacio())
+
+    def _fmt(eq):
+        return '\n'.join(f"**{r}**: {draft[eq][r]['nombre']}" if r in draft[eq] else f'**{r}**: _vacio_'
+                          for r in ROLES_LOL)
+
+    embed = discord.Embed(title='Borrador de equipos manuales', color=0x95A5A6)
+    embed.add_field(name='Equipo A', value=_fmt('A'), inline=True)
+    embed.add_field(name='Equipo B', value=_fmt('B'), inline=True)
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+@tree.command(name='manual_quitar', description='Saca a un jugador del borrador manual')
+@app_commands.describe(jugador='El jugador a sacar del borrador')
+async def manual_quitar(interaction: discord.Interaction, jugador: discord.Member):
+    guild_id = str(interaction.guild_id)
+    draft = MANUAL_DRAFTS.setdefault(guild_id, _draft_vacio())
+    sacado = False
+    for eq in ('A', 'B'):
+        for r in list(draft[eq].keys()):
+            if draft[eq][r]['discord_id'] == str(jugador.id):
+                del draft[eq][r]
+                sacado = True
+    await interaction.response.send_message(
+        'Sacado del borrador.' if sacado else 'Ese jugador no estaba en el borrador.', ephemeral=True)
+
+
+@tree.command(name='manual_confirmar', description='Confirma los equipos armados a mano (deben estar los 10 cupos llenos)')
+async def manual_confirmar(interaction: discord.Interaction):
+    guild_id = str(interaction.guild_id)
+    draft = MANUAL_DRAFTS.get(guild_id, _draft_vacio())
+    faltantes = [f'Equipo {eq} - {r}' for eq in ('A', 'B') for r in ROLES_LOL if r not in draft[eq]]
+    if faltantes:
+        await interaction.response.send_message(
+            'Todavia faltan cupos por llenar: ' + ', '.join(faltantes), ephemeral=True)
+        return
+
+    asign_a = [(draft['A'][r], r, False) for r in ROLES_LOL]
+    asign_b = [(draft['B'][r], r, False) for r in ROLES_LOL]
+
+    def _fmt_equipo(asign):
+        return '\n'.join(f'**{rol}**: {j["nombre"]}' for j, rol, _ in asign)
+
+    elo_a = sum(j['elo'] for j, _, _ in asign_a)
+    elo_b = sum(j['elo'] for j, _, _ in asign_b)
+    embed = discord.Embed(title='Equipos armados (manual)', color=0x95A5A6,
+                           description=f'Diferencia de elo entre equipos: {abs(elo_a - elo_b)} pts')
+    embed.add_field(name='Equipo A', value=_fmt_equipo(asign_a), inline=True)
+    embed.add_field(name='Equipo B', value=_fmt_equipo(asign_b), inline=True)
+    embed.set_footer(text='Cuando termine la partida, reporten el resultado con /resultado_personalizada')
+    await interaction.response.send_message(embed=embed)
+
+    ULTIMO_EQUIPOS[guild_id] = {'equipo_a': asign_a, 'equipo_b': asign_b, 'reportado': False}
+    MANUAL_DRAFTS[guild_id] = _draft_vacio()
 
 
 def _actualizar_stats_jugador(ws, filas, jugador, rol, autofill, gano):
@@ -502,7 +629,16 @@ async def perfil_personalizadas(interaction: discord.Interaction, usuario: disco
 
 @client.event
 async def on_ready():
-    await tree.sync()
+    # Sync GLOBAL puede tardar hasta 1 hora en aparecerle a los usuarios. Sincronizamos directo
+    # al servidor (guild) para que los comandos (incluido /anotarme) aparezcan al instante.
+    try:
+        guild_obj = discord.Object(id=int(DISCORD_GUILD_ID))
+        tree.copy_global_to(guild=guild_obj)
+        synced = await tree.sync(guild=guild_obj)
+        print(f'[personalizadas] {len(synced)} comandos sincronizados al instante en el servidor {DISCORD_GUILD_ID}')
+    except Exception as e:
+        print(f'[personalizadas] Error sincronizando comandos al guild, uso sync global: {e}')
+        await tree.sync()
     print(f'[personalizadas] Conectado como {client.user}')
 
 
