@@ -1103,6 +1103,193 @@ async def procesar_logros_y_roles(canal, high, low, db):
             pass
 
 
+INSIGNIAS_FINALES = [
+    ('champion_high', 'Campeon High Elo', discord.Colour.gold()),
+    ('subcampeon_high', 'Subcampeon High Elo', discord.Colour.light_grey()),
+    ('tercero_high', 'Tercer Lugar High Elo', discord.Colour.orange()),
+    ('champion_low', 'Campeon Low Elo', discord.Colour.gold()),
+    ('subcampeon_low', 'Subcampeon Low Elo', discord.Colour.light_grey()),
+    ('tercero_low', 'Tercer Lugar Low Elo', discord.Colour.orange()),
+    ('champion_pool', 'Mayor Champion Pool', discord.Colour.blue()),
+    ('racha', 'Mejor Racha de Victorias', discord.Colour.red()),
+    ('ascenso', 'Mayor Ascenso de Rango', discord.Colour.green()),
+    ('winrate', 'Mejor Winrate', discord.Colour.teal()),
+    ('voz', 'Voz de Hierro', discord.Colour.purple()),
+    ('partidas', 'Mas Partidas Jugadas', discord.Colour.dark_gold()),
+    ('escudos', 'Maestro de los Escudos', discord.Colour.blurple()),
+    ('resiliencia', 'Sobreviviente del Blue Shell', discord.Colour.dark_red()),
+]
+
+
+def calcular_premios_finales(db, high, low):
+    combinados = high + low
+    premios = {}
+
+    def top(lista, n):
+        return lista[n - 1] if len(lista) >= n else None
+
+    if top(high, 1): premios['champion_high'] = top(high, 1)
+    if top(high, 2): premios['subcampeon_high'] = top(high, 2)
+    if top(high, 3): premios['tercero_high'] = top(high, 3)
+    if top(low, 1): premios['champion_low'] = top(low, 1)
+    if top(low, 2): premios['subcampeon_low'] = top(low, 2)
+    if top(low, 3): premios['tercero_low'] = top(low, 3)
+
+    if combinados:
+        def n_campeones(j):
+            data = db.get(j['puuid'], {})
+            campeones = data.get('campeones_ganados') or {}
+            return len(campeones) if isinstance(campeones, dict) else 0
+
+        cand = max(combinados, key=n_campeones)
+        if n_campeones(cand) > 0:
+            premios['champion_pool'] = dict(cand, _valor=f"{n_campeones(cand)} campeones distintos ganados")
+
+        cand = max(combinados, key=lambda j: j['racha'])
+        if cand['racha'] > 0:
+            premios['racha'] = dict(cand, _valor=f"{cand['racha']} victorias seguidas")
+
+        cand = max(combinados, key=lambda j: j['escalado'])
+        if cand['escalado'] > 0:
+            premios['ascenso'] = dict(cand, _valor=f"+{cand['escalado']} de escalado")
+
+        elegibles_wr = [j for j in combinados if j['partidas'] >= 20]
+        if elegibles_wr:
+            cand = max(elegibles_wr, key=lambda j: j['winrate'])
+            premios['winrate'] = dict(cand, _valor=f"{cand['winrate']}% de winrate ({cand['partidas']} partidas)")
+
+        cand = max(combinados, key=lambda j: j['tiempo_voz_min'])
+        if cand['tiempo_voz_min'] > 0:
+            premios['voz'] = dict(cand, _valor=f"{round(cand['tiempo_voz_min'] / 60, 1)}h en canal de voz")
+
+        cand = max(combinados, key=lambda j: j['partidas'])
+        if cand['partidas'] > 0:
+            premios['partidas'] = dict(cand, _valor=f"{cand['partidas']} partidas jugadas")
+
+        cand = max(combinados, key=lambda j: j['escudos'])
+        if cand['escudos'] > 0:
+            premios['escudos'] = dict(cand, _valor=f"{cand['escudos']} escudos azules acumulados")
+
+        cand = max(combinados, key=lambda j: j['castigos'])
+        if cand['castigos'] > 0:
+            premios['resiliencia'] = dict(cand, _valor=f"supero {cand['castigos']} puntos de maldiciones/castigos")
+
+    return premios
+
+
+async def otorgar_insignias_finales(interaction, db):
+    guild = interaction.guild
+    canal = interaction.channel
+    high, low, _, _ = calcular_tabla(db)
+    combinados = high + low
+    premios = calcular_premios_finales(db, high, low)
+    nombres_insignias = dict((clave, nombre) for clave, nombre, _ in INSIGNIAS_FINALES)
+    colores_insignias = dict((clave, color) for clave, nombre, color in INSIGNIAS_FINALES)
+
+    if guild:
+        for clave, jugador in premios.items():
+            nombre_rol = nombres_insignias[clave]
+            rol = discord.utils.get(guild.roles, name=nombre_rol)
+            if rol is None:
+                try:
+                    rol = await guild.create_role(name=nombre_rol, colour=colores_insignias[clave],
+                                                   reason='Insignia final SoloQ Challenge')
+                except Exception:
+                    rol = None
+            if rol:
+                try:
+                    miembro = guild.get_member(int(jugador['discord_id'])) or await guild.fetch_member(int(jugador['discord_id']))
+                    await miembro.add_roles(rol, reason='Premio final del torneo')
+                except Exception:
+                    pass
+
+    desc = 'El torneo ha llegado a su fin. Gracias a todos por jugar, maldecir y ser maldecidos. Estos son los puestos finales e insignias otorgadas:'
+    partidas_j = premios.get('partidas')
+    if partidas_j:
+        desc += (f"\n\nMencion especial de constancia: <@{partidas_j['discord_id']}> **{partidas_j['nombre']}** "
+                 f"jugo mas partidas que nadie en todo el torneo, con **{partidas_j['partidas']} partidas**.")
+
+    embed = discord.Embed(title='Resultados Finales - SoloQ Challenge', description=desc, colour=discord.Colour.gold())
+
+    def lista_txt(lista):
+        if not lista:
+            return '_Sin jugadores clasificados_'
+        lineas = []
+        for i, j in enumerate(lista[:10]):
+            medalla = f'{i + 1}.'
+            lineas.append(f"{medalla} **{j['nombre']}** - {j['total']} PTS (<@{j['discord_id']}>)")
+        return '\n'.join(lineas)
+
+    embed.add_field(name='High Elo (Master+)', value=lista_txt(high), inline=False)
+    embed.add_field(name='Low Elo (Hierro-Diamante)', value=lista_txt(low), inline=False)
+
+    lineas_insignias = []
+    for clave, nombre, _ in INSIGNIAS_FINALES:
+        j = premios.get(clave)
+        if j:
+            lineas_insignias.append(f"{nombre}: **{j['nombre']}** (<@{j['discord_id']}>) - {j.get('_valor', '')}")
+    if lineas_insignias:
+        texto_insignias = '\n'.join(lineas_insignias)
+        if len(texto_insignias) > 1024:
+            texto_insignias = texto_insignias[:1000] + '\n... (mas, contacta a la Directiva)'
+        embed.add_field(name='Insignias especiales', value=texto_insignias, inline=False)
+
+    if combinados:
+        menciones = ' '.join(f"<@{j['discord_id']}>" for j in combinados)
+        if len(menciones) > 1024:
+            menciones = menciones[:1000] + ' y mas...'
+        embed.add_field(name=f'Gracias a todos los participantes ({len(combinados)})', value=menciones, inline=False)
+
+    embed.set_footer(text='Gracias por participar en SoloQ Challenge. Nos vemos en la proxima temporada.')
+    if canal:
+        await canal.send(embed=embed)
+
+    ganadores_puuid = {}
+    for clave, jugador in premios.items():
+        ganadores_puuid.setdefault(jugador['puuid'], []).append(nombres_insignias[clave])
+
+    dms_enviados = 0
+    for puuid, insignias in ganadores_puuid.items():
+        jugador = next((p for p in combinados if p['puuid'] == puuid), None)
+        if not jugador or not guild:
+            continue
+        try:
+            miembro = guild.get_member(int(jugador['discord_id'])) or await guild.fetch_member(int(jugador['discord_id']))
+            dm_embed = discord.Embed(
+                title='Felicidades - SoloQ Challenge',
+                description=(f"{jugador['nombre']}, el torneo SoloQ Challenge ha terminado y ganaste "
+                             f"{'una insignia' if len(insignias) == 1 else f'{len(insignias)} insignias'}."),
+                colour=discord.Colour.gold())
+            dm_embed.add_field(name='Insignias obtenidas', value='\n'.join(f'- {i}' for i in insignias), inline=False)
+            dm_embed.set_footer(text='Gracias por participar. Nos vemos en la proxima temporada.')
+            await miembro.send(embed=dm_embed)
+            dms_enviados += 1
+        except Exception:
+            pass
+
+    return len(premios), dms_enviados
+
+
+@tree.command(name='finalizar_torneo', description='(Directiva) Publica resultados finales, otorga insignias/roles y avisa a los ganadores')
+@app_commands.describe(confirmar='Escribe SI (mayusculas) para confirmar el cierre y otorgamiento de premios')
+async def finalizar_torneo(interaction: discord.Interaction, confirmar: str):
+    if not await requiere_directiva(interaction):
+        return
+    await interaction.response.defer()
+    if confirmar != 'SI':
+        await interaction.followup.send(
+            'Accion cancelada. Escribe `confirmar: SI` (en mayusculas) para publicar los resultados finales, '
+            'crear/asignar los roles de insignias, dar las gracias y etiquetar a todos los participantes, y enviar '
+            'un DM de felicitacion a cada ganador. Usalo solo cuando el torneo realmente haya terminado.')
+        return
+    db = cargar_db()
+    n_premios, n_dms = await otorgar_insignias_finales(interaction, db)
+    guardar_db(db, forzar=True)
+    await interaction.followup.send(
+        f'Torneo finalizado. Se publicaron los resultados, se otorgaron {n_premios} insignias/roles y se enviaron '
+        f'{n_dms} mensajes directos a los ganadores.')
+
+
 # ------------------- COMANDOS -------------------
 
 @tree.command(name='registrar', description='Registra tu cuenta de LoL (LAN) para el torneo')
