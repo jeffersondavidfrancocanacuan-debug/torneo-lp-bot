@@ -718,44 +718,82 @@ def aegis_bloquea(db, puuid, data):
 
 
 
+_RANKED_INFO_CACHE = {}
+_RANKED_INFO_CACHE_LOCK = Lock()
+
+
+def _riot_get_con_reintento(url, headers, timeout=8, intentos=3):
+    """GET a la API de Riot con reintento automatico ante 429 (rate limit), respetando el
+    header Retry-After cuando esta presente. Sin esto, un simple rate limit durante
+    /finalizar_torneo hacia que jugadores enteros desaparecieran de los resultados en vez
+    de solo demorar un poco la respuesta."""
+    r = None
+    for intento in range(intentos):
+        r = HTTP_SESSION.get(url, headers=headers, timeout=timeout)
+        if r.status_code == 429 and intento < intentos - 1:
+            espera = r.headers.get('Retry-After')
+            try:
+                espera = float(espera)
+            except (TypeError, ValueError):
+                espera = 1.5
+            time.sleep(min(espera, 5) + 0.2)
+            continue
+        return r
+    return r
+
+
 def obtener_info_ranked(riot_id, region):
     """riot_id con formato 'Nombre#TAG'. Usa account-v1 + league-v4 by-puuid.
-    Cualquier fallo de red/API (timeout, SSL, etc.) devuelve None en vez de propagar la excepcion,
-    para que un problema puntual con la API de Riot no tumbe toda la pagina/tabla."""
+    Reintenta automaticamente ante rate limit (429) de la API de Riot. Si tras los reintentos
+    sigue fallando (timeout, SSL, 429 persistente, etc.), devuelve el ultimo dato valido que
+    se tenga en cache para ese jugador en vez de None, para que un fallo puntual de la API
+    no lo saque de los resultados finales del torneo. Solo devuelve None si nunca se pudo
+    obtener un dato valido de ese jugador."""
     plataforma = PLATFORM_MAP.get(region.lower())
     region_base = REGION_MAP.get(region.lower())
     if not plataforma or not region_base or '#' not in riot_id:
         return None
     game_name, tag_line = riot_id.split('#', 1)
     headers = {'X-Riot-Token': RIOT_API_KEY}
+    clave_cache = riot_id.lower()
 
     try:
         url = f'https://{region_base}.api.riotgames.com/riot/account/v1/accounts/by-riot-id/{game_name}/{tag_line}'
-        r = HTTP_SESSION.get(url, headers=headers, timeout=8)
+        r = _riot_get_con_reintento(url, headers)
         if r.status_code != 200:
-            return None
+            with _RANKED_INFO_CACHE_LOCK:
+                return _RANKED_INFO_CACHE.get(clave_cache)
         cuenta = r.json()
         puuid = cuenta['puuid']
         nombre_completo = f"{cuenta['gameName']}#{cuenta['tagLine']}"
 
+        time.sleep(0.05)
         url2 = f'https://{plataforma}.api.riotgames.com/lol/league/v4/entries/by-puuid/{puuid}'
-        r2 = HTTP_SESSION.get(url2, headers=headers, timeout=8)
+        r2 = _riot_get_con_reintento(url2, headers)
         if r2.status_code != 200:
-            return None
+            with _RANKED_INFO_CACHE_LOCK:
+                return _RANKED_INFO_CACHE.get(clave_cache)
+        resultado = None
         for entry in r2.json():
             if entry['queueType'] == 'RANKED_SOLO_5x5':
-                return {
+                resultado = {
                     'puuid': puuid, 'tier': entry['tier'], 'rank': entry['rank'],
                     'lp': entry['leaguePoints'], 'wins': entry['wins'], 'losses': entry['losses'],
                     'nombre': nombre_completo
                 }
-        return {
-            'puuid': puuid, 'tier': 'UNRANKED', 'rank': '', 'lp': 0, 'wins': 0, 'losses': 0,
-            'nombre': nombre_completo
-        }
+                break
+        if resultado is None:
+            resultado = {
+                'puuid': puuid, 'tier': 'UNRANKED', 'rank': '', 'lp': 0, 'wins': 0, 'losses': 0,
+                'nombre': nombre_completo
+            }
+        with _RANKED_INFO_CACHE_LOCK:
+            _RANKED_INFO_CACHE[clave_cache] = resultado
+        return resultado
     except Exception as e:
         print(f'Error obteniendo info ranked de {riot_id}: {e}')
-        return None
+        with _RANKED_INFO_CACHE_LOCK:
+            return _RANKED_INFO_CACHE.get(clave_cache)
 
 
 
@@ -957,6 +995,10 @@ def calcular_tabla(db):
             continue
         info = obtener_info_ranked(data['nombre'], data['region'])
         if info is None:
+            pendientes.append({
+                'puuid': puuid, 'discord_id': data['discord_id'], 'nombre': data['nombre'],
+                'tier_actual': 'Error API', 'rank_actual': '', 'elo_previo': data.get('elo_previo', ''),
+            })
             continue
         lp_ganados = info['lp'] - data['lp_inicial']
         escalado_inicial = valor_escalado(data.get('tier_inicial', info['tier']), data.get('rank_inicial', ''), data['lp_inicial'])
@@ -1239,8 +1281,9 @@ async def otorgar_insignias_finales(interaction, db):
             return '_Sin jugadores clasificados_'
         lineas = []
         for i, j in enumerate(lista[:10]):
+            signo_lp = '+' if j['lp_ganados'] >= 0 else ''
             lineas.append(f"{i + 1}. **{j['nombre']}** - {j['total']} PTS | {j['wins']}W-{j['losses']}L ({j['winrate']}%) | "
-                          f"+{j['lp_ganados']} LP (<@{j['discord_id']}>)")
+                          f"{signo_lp}{j['lp_ganados']} LP (<@{j['discord_id']}>)")
         return '\n'.join(lineas)
 
     embed.add_field(name='High Elo (Master+)', value=lista_txt(high), inline=False)
@@ -1267,12 +1310,22 @@ async def otorgar_insignias_finales(interaction, db):
         j = premios.get(clave)
         if j:
             lineas_insignias.append(f"{nombre}: **{j['nombre']}** (<@{j['discord_id']}>) - {j.get('_valor', '')}")
-    if lineas_insignias:
-        texto_insignias = '\n'.join(lineas_insignias)
-        if len(texto_insignias) > 1024:
-            texto_insignias = texto_insignias[:980] + '\n... (mas, contacta a la Directiva)'
-        embed.add_field(name=f'Insignias especiales ({len(lineas_insignias)})', value=texto_insignias, inline=False)
-
+            if lineas_insignias:
+            bloques = []
+            bloque_actual = []
+            largo_actual = 0
+            for linea in lineas_insignias:
+                if largo_actual + len(linea) + 1 > 1000 and bloque_actual:
+                    bloques.append(bloque_actual)
+                    bloque_actual = []
+                    largo_actual = 0
+                bloque_actual.append(linea)
+                largo_actual += len(linea) + 1
+            if bloque_actual:
+                bloques.append(bloque_actual)
+            for idx, bloque in enumerate(bloques):
+                sufijo = f' ({idx + 1}/{len(bloques)})' if len(bloques) > 1 else ''
+                embed.add_field(name=f'Insignias especiales ({len(lineas_insignias)}){sufijo}', value='\n'.join(bloque), inline=False)
     if combinados:
         menciones = ' '.join(f"<@{j['discord_id']}>" for j in combinados)
         if len(menciones) > 1024:
