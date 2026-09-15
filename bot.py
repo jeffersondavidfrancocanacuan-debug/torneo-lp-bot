@@ -1312,6 +1312,26 @@ async def otorgar_insignias_finales(interaction, db):
     return len(premios), dms_enviados
 
 
+@tree.command(name='finalizar_torneo', description='(Directiva) Publica resultados finales, otorga insignias/roles y avisa a los ganadores')
+@app_commands.describe(confirmar='Escribe SI (mayusculas) para confirmar el cierre y otorgamiento de premios')
+async def finalizar_torneo(interaction: discord.Interaction, confirmar: str):
+    if not await requiere_directiva(interaction):
+        return
+    await interaction.response.defer()
+    if confirmar != 'SI':
+        await interaction.followup.send(
+            'Accion cancelada. Escribe `confirmar: SI` (en mayusculas) para publicar los resultados finales, '
+            'crear/asignar los roles de insignias, dar las gracias y etiquetar a todos los participantes, y enviar '
+            'un DM de felicitacion a cada ganador. Usalo solo cuando el torneo realmente haya terminado.')
+        return
+    db = cargar_db()
+    n_premios, n_dms = await otorgar_insignias_finales(interaction, db)
+    guardar_db(db, forzar=True)
+    await interaction.followup.send(
+        f'Torneo finalizado. Se publicaron los resultados, se otorgaron {n_premios} insignias/roles y se enviaron '
+        f'{n_dms} mensajes directos a los ganadores.')
+
+
 # ------------------- COMANDOS -------------------
 
 @tree.command(name='registrar', description='Registra tu cuenta de LoL (LAN) para el torneo')
