@@ -353,8 +353,53 @@ async def armar_equipos(interaction: discord.Interaction):
     for i in range(9, -1, -1):
         _borrar_fila(ws, i)
 
+    # guardar quienes jugaron, para poder actualizar sus estadisticas cuando se reporte el resultado
+    guild_id = str(interaction.guild_id)
+    ULTIMO_EQUIPOS[guild_id] = {'equipo_a': asign_a, 'equipo_b': asign_b, 'reportado': False}
 
-ULTIMO_EQUIPOS = {}  # guild_id -> {'equipo_a': [...], 'equipo_b': [...]}
+
+ULTIMO_EQUIPOS = {}  # guild_id -> {'equipo_a': [(jugador, rol, autofill)...], 'equipo_b': [...], 'reportado': bool}
+
+ROL_A_HEADER = {'Top': 'rol_top', 'Jungla': 'rol_jungla', 'Mid': 'rol_mid', 'ADC': 'rol_adc', 'Support': 'rol_support'}
+
+
+def _actualizar_stats_jugador(ws, filas, jugador, rol, autofill, gano):
+    """Busca (o crea) la fila de stats de un jugador y aplica el resultado de una partida."""
+    discord_id = jugador.get('discord_id', '')
+    idx = next((i for i, f in enumerate(filas) if f['discord_id'] == discord_id), None)
+    if idx is None:
+        fila = {h: 0 for h in STATS_HEADERS}
+        fila['discord_id'] = discord_id
+        fila['nombre'] = jugador.get('nombre', '')
+    else:
+        fila = dict(filas[idx])
+
+    def _n(campo):
+        try:
+            return int(fila.get(campo, 0) or 0)
+        except (TypeError, ValueError):
+            return 0
+
+    fila['partidas'] = _n('partidas') + 1
+    if gano:
+        fila['victorias'] = _n('victorias') + 1
+        fila['racha_actual'] = _n('racha_actual') + 1
+    else:
+        fila['derrotas'] = _n('derrotas') + 1
+        fila['racha_actual'] = 0
+    fila['mejor_racha'] = max(_n('mejor_racha'), _n('racha_actual'))
+    if autofill:
+        fila['veces_autofill'] = _n('veces_autofill') + 1
+    header_rol = ROL_A_HEADER.get(rol)
+    if header_rol:
+        fila[header_rol] = _n(header_rol) + 1
+
+    if idx is None:
+        _escribir_fila(ws, STATS_HEADERS, fila)
+        filas.append(fila)
+    else:
+        _actualizar_fila(ws, STATS_HEADERS, idx, fila)
+        filas[idx] = fila
 
 
 @tree.command(name='resultado_personalizada', description='Reporta el resultado de la ultima personalizada armada')
@@ -363,16 +408,36 @@ ULTIMO_EQUIPOS = {}  # guild_id -> {'equipo_a': [...], 'equipo_b': [...]}
                                 app_commands.Choice(name='Equipo B', value='B')])
 async def resultado_personalizada(interaction: discord.Interaction, ganador: app_commands.Choice[str]):
     await interaction.response.defer()
+    guild_id = str(interaction.guild_id)
+    datos = ULTIMO_EQUIPOS.get(guild_id)
+
+    equipo_a_str, equipo_b_str = '', ''
+    if datos and not datos['reportado']:
+        equipo_a_str = ', '.join(j['nombre'] for j, _, _ in datos['equipo_a'])
+        equipo_b_str = ', '.join(j['nombre'] for j, _, _ in datos['equipo_b'])
+
     ws_hist, _ = _leer_tabla('personalizadas_historial', HISTORIAL_HEADERS)
     fila = {
         'fecha': datetime.datetime.utcnow().isoformat(),
-        'equipo_a': '', 'equipo_b': '', 'ganador': ganador.value,
+        'equipo_a': equipo_a_str, 'equipo_b': equipo_b_str, 'ganador': ganador.value,
         'reportado_por': str(interaction.user.id),
     }
     _escribir_fila(ws_hist, HISTORIAL_HEADERS, fila)
+
+    nota_extra = ''
+    if datos and not datos['reportado']:
+        ws_stats, filas_stats = _leer_tabla('personalizadas_stats', STATS_HEADERS)
+        for j, rol, autofill in datos['equipo_a']:
+            _actualizar_stats_jugador(ws_stats, filas_stats, j, rol, autofill, gano=(ganador.value == 'A'))
+        for j, rol, autofill in datos['equipo_b']:
+            _actualizar_stats_jugador(ws_stats, filas_stats, j, rol, autofill, gano=(ganador.value == 'B'))
+        datos['reportado'] = True
+    else:
+        nota_extra = ('\n(No encontre el ultimo /armar_equipos de este servidor, asi que no pude actualizar '
+                       'estadisticas individuales. Reporten justo despues de armar los equipos.)')
+
     await interaction.followup.send(
-        f'Resultado cargado: gano el **Equipo {ganador.value}**. Gracias por reportar.\n'
-        f'(Nota: para vincular jugadores automaticamente a este resultado, reporten justo despues de /armar_equipos.)')
+        f'Resultado cargado: gano el **Equipo {ganador.value}**. Gracias por reportar.{nota_extra}')
 
 
 @tree.command(name='elo', description='Consulta el elo actual de una cuenta de Riot')
