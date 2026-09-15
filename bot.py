@@ -2696,6 +2696,12 @@ async def on_ready():
     print(f'Bot conectado como {client.user}')
     if not _comandos_sincronizados:
         await tree.sync()
+        try:
+            guild_obj = discord.Object(id=331997851355709451)
+            tree.copy_global_to(guild=guild_obj)
+            await tree.sync(guild=guild_obj)
+        except Exception as e:
+            print(f'No se pudo sincronizar comandos por servidor: {e}')
         _comandos_sincronizados = True
     ahora = datetime.datetime.now()
     for guild in client.guilds:
