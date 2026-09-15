@@ -1270,7 +1270,7 @@ async def otorgar_insignias_finales(interaction, db):
     if lineas_insignias:
         texto_insignias = '\n'.join(lineas_insignias)
         if len(texto_insignias) > 1024:
-            texto_insignias = texto_insignias[:1000] + '\n... (mas, contacta a la Directiva)'
+            texto_insignias = texto_insignias[:980] + '\n... (mas, contacta a la Directiva)'
         embed.add_field(name=f'Insignias especiales ({len(lineas_insignias)})', value=texto_insignias, inline=False)
 
     if combinados:
@@ -1488,7 +1488,7 @@ async def perfil(interaction: discord.Interaction):
     max_activas_perfil = maldicion_max_activas_por_posicion(posicion)
     malds_txt = '\n'.join(f'- {m["texto"]}' + (f' | lanzada por <@{m["de"]}>' if m.get('de') else '') + (' (cumplido)' if m.get('cumplido') else ' (pendiente)') for m in activas) or 'Ninguna'
     if len(malds_txt) > 1024:
-            malds_txt = malds_txt[:1000] + '\n... (mas, contacta a la Directiva)'
+            malds_txt = malds_txt[:980] + '\n... (mas, contacta a la Directiva)'
     embed.add_field(name=f'Maldiciones activas ({len(activas)}/{max_activas_perfil})', value=malds_txt, inline=False)
     embed.add_field(name='Logros', value=logros_txt, inline=False)
     await interaction.followup.send(embed=embed)
