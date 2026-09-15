@@ -62,6 +62,43 @@ TIER_VALOR = {
 RANK_VALOR = {'IV': 0, 'III': 100, 'II': 200, 'I': 300}
 
 
+def _prob_victoria(elo_propio, elo_rival):
+    """Formula tipo Elo: probabilidad de victoria de un equipo segun la diferencia de elo total."""
+    return 1 / (1 + 10 ** ((elo_rival - elo_propio) / 400))
+
+
+APUESTA_PERSONALIZADA_HEADERS = ['guild_id', 'equipo_a_ids', 'equipo_a_nombres', 'equipo_b_ids',
+                                  'equipo_b_nombres', 'elo_a', 'elo_b', 'prob_a', 'prob_b', 'estado',
+                                  'ganador', 'hora_armado']
+
+
+def _actualizar_apuesta_personalizada(guild_id, equipo_a, equipo_b, estado, ganador=''):
+    """Escribe/actualiza en la hoja compartida 'apuestas_partida_personalizada' el estado de la
+    partida actual del servidor, para que el bot de Scary Coins sepa en que se puede apostar y
+    cuando se resolvio. equipo_a/equipo_b son listas de (jugador, rol, autofill) como las que ya
+    maneja armar_equipos/manual_confirmar/resultado_personalizada."""
+    ws, filas = _leer_tabla('apuestas_partida_personalizada', APUESTA_PERSONALIZADA_HEADERS)
+    elo_a = sum(j['elo'] for j, _, _ in equipo_a)
+    elo_b = sum(j['elo'] for j, _, _ in equipo_b)
+    prob_a = _prob_victoria(elo_a, elo_b)
+    fila = {
+        'guild_id': guild_id,
+        'equipo_a_ids': ','.join(j['discord_id'] for j, _, _ in equipo_a),
+        'equipo_a_nombres': ', '.join(j['nombre'] for j, _, _ in equipo_a),
+        'equipo_b_ids': ','.join(j['discord_id'] for j, _, _ in equipo_b),
+        'equipo_b_nombres': ', '.join(j['nombre'] for j, _, _ in equipo_b),
+        'elo_a': elo_a, 'elo_b': elo_b,
+        'prob_a': round(prob_a, 4), 'prob_b': round(1 - prob_a, 4),
+        'estado': estado, 'ganador': ganador,
+        'hora_armado': datetime.datetime.utcnow().isoformat(),
+    }
+    idx = next((i for i, f in enumerate(filas) if f['guild_id'] == guild_id), None)
+    if idx is None:
+        _escribir_fila(ws, APUESTA_PERSONALIZADA_HEADERS, fila)
+    else:
+        _actualizar_fila(ws, APUESTA_PERSONALIZADA_HEADERS, idx, fila)
+
+
 # ---------------------------------------------------------------------------
 # Google Sheets
 # ---------------------------------------------------------------------------
@@ -363,6 +400,7 @@ async def armar_equipos(interaction: discord.Interaction):
     # guardar quienes jugaron, para poder actualizar sus estadisticas cuando se reporte el resultado
     guild_id = str(interaction.guild_id)
     ULTIMO_EQUIPOS[guild_id] = {'equipo_a': asign_a, 'equipo_b': asign_b, 'reportado': False}
+    _actualizar_apuesta_personalizada(guild_id, asign_a, asign_b, estado='abierta')
 
 
 ULTIMO_EQUIPOS = {}  # guild_id -> {'equipo_a': [(jugador, rol, autofill)...], 'equipo_b': [...], 'reportado': bool}
@@ -487,6 +525,7 @@ async def manual_confirmar(interaction: discord.Interaction):
     await interaction.response.send_message(embed=embed)
 
     ULTIMO_EQUIPOS[guild_id] = {'equipo_a': asign_a, 'equipo_b': asign_b, 'reportado': False}
+    _actualizar_apuesta_personalizada(guild_id, asign_a, asign_b, estado='abierta')
     MANUAL_DRAFTS[guild_id] = _draft_vacio()
 
 
@@ -559,6 +598,8 @@ async def resultado_personalizada(interaction: discord.Interaction, ganador: app
         for j, rol, autofill in datos['equipo_b']:
             _actualizar_stats_jugador(ws_stats, filas_stats, j, rol, autofill, gano=(ganador.value == 'B'))
         datos['reportado'] = True
+        _actualizar_apuesta_personalizada(guild_id, datos['equipo_a'], datos['equipo_b'],
+                                           estado='resuelta', ganador=ganador.value)
     else:
         nota_extra = ('\n(No encontre el ultimo /armar_equipos de este servidor, asi que no pude actualizar '
                        'estadisticas individuales. Reporten justo despues de armar los equipos.)')
