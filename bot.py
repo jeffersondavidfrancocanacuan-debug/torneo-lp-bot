@@ -1113,10 +1113,14 @@ INSIGNIAS_FINALES = [
     ('champion_pool', 'Mayor Champion Pool', discord.Colour.blue()),
     ('racha', 'Mejor Racha de Victorias', discord.Colour.red()),
     ('ascenso', 'Mayor Ascenso de Rango', discord.Colour.green()),
+    ('salto_liga', 'Mayor Salto de Liga', discord.Colour.dark_green()),
+    ('lp_progreso', 'Mayor Progreso de LP', discord.Colour.dark_teal()),
     ('winrate', 'Mejor Winrate', discord.Colour.teal()),
+    ('victorias', 'Mas Victorias Totales', discord.Colour.dark_blue()),
     ('voz', 'Voz de Hierro', discord.Colour.purple()),
     ('partidas', 'Mas Partidas Jugadas', discord.Colour.dark_gold()),
     ('escudos', 'Maestro de los Escudos', discord.Colour.blurple()),
+    ('bonus', 'Mayor Bonus Ganado', discord.Colour.dark_orange()),
     ('resiliencia', 'Sobreviviente del Blue Shell', discord.Colour.dark_red()),
 ]
 
@@ -1153,10 +1157,25 @@ def calcular_premios_finales(db, high, low):
         if cand['escalado'] > 0:
             premios['ascenso'] = dict(cand, _valor=f"+{cand['escalado']} de escalado")
 
+        def saltos_liga(j):
+            return tier_index(j['tier_actual']) - tier_index(j['tier_inicial'])
+
+        cand = max(combinados, key=saltos_liga)
+        if saltos_liga(cand) > 0:
+            premios['salto_liga'] = dict(cand, _valor=f"subio {saltos_liga(cand)} liga(s): {cand['tier_inicial']} a {cand['tier_actual']}")
+
+        cand = max(combinados, key=lambda j: j['lp_ganados'])
+        if cand['lp_ganados'] > 0:
+            premios['lp_progreso'] = dict(cand, _valor=f"+{cand['lp_ganados']} LP ganados")
+
         elegibles_wr = [j for j in combinados if j['partidas'] >= 20]
         if elegibles_wr:
             cand = max(elegibles_wr, key=lambda j: j['winrate'])
             premios['winrate'] = dict(cand, _valor=f"{cand['winrate']}% de winrate ({cand['partidas']} partidas)")
+
+        cand = max(combinados, key=lambda j: j['wins'])
+        if cand['wins'] > 0:
+            premios['victorias'] = dict(cand, _valor=f"{cand['wins']} victorias totales")
 
         cand = max(combinados, key=lambda j: j['tiempo_voz_min'])
         if cand['tiempo_voz_min'] > 0:
@@ -1169,6 +1188,10 @@ def calcular_premios_finales(db, high, low):
         cand = max(combinados, key=lambda j: j['escudos'])
         if cand['escudos'] > 0:
             premios['escudos'] = dict(cand, _valor=f"{cand['escudos']} escudos azules acumulados")
+
+        cand = max(combinados, key=lambda j: j['bonus'])
+        if cand['bonus'] > 0:
+            premios['bonus'] = dict(cand, _valor=f"{cand['bonus']} puntos de bonus ganados")
 
         cand = max(combinados, key=lambda j: j['castigos'])
         if cand['castigos'] > 0:
@@ -1216,12 +1239,28 @@ async def otorgar_insignias_finales(interaction, db):
             return '_Sin jugadores clasificados_'
         lineas = []
         for i, j in enumerate(lista[:10]):
-            medalla = f'{i + 1}.'
-            lineas.append(f"{medalla} **{j['nombre']}** - {j['total']} PTS (<@{j['discord_id']}>)")
+            lineas.append(f"{i + 1}. **{j['nombre']}** - {j['total']} PTS | {j['wins']}W-{j['losses']}L ({j['winrate']}%) | "
+                          f"+{j['lp_ganados']} LP (<@{j['discord_id']}>)")
         return '\n'.join(lineas)
 
     embed.add_field(name='High Elo (Master+)', value=lista_txt(high), inline=False)
     embed.add_field(name='Low Elo (Hierro-Diamante)', value=lista_txt(low), inline=False)
+
+    if combinados:
+        total_partidas = sum(j['partidas'] for j in combinados)
+        total_wins = sum(j['wins'] for j in combinados)
+        total_losses = sum(j['losses'] for j in combinados)
+        wr_promedio = round((total_wins / (total_wins + total_losses)) * 100) if (total_wins + total_losses) else 0
+        total_horas_voz = round(sum(j['tiempo_voz_min'] for j in combinados) / 60, 1)
+        total_campeones = len({c for j in combinados for c in (db.get(j['puuid'], {}).get('campeones_ganados') or {}).keys()})
+        total_escudos = sum(j['escudos'] for j in combinados)
+        stats_txt = (f"Jugadores activos: **{len(combinados)}**\n"
+                     f"Partidas jugadas en total: **{total_partidas}**\n"
+                     f"Record global: **{total_wins}W - {total_losses}L** ({wr_promedio}% winrate promedio)\n"
+                     f"Horas acumuladas en canal de voz: **{total_horas_voz}h**\n"
+                     f"Campeones distintos usados para ganar: **{total_campeones}**\n"
+                     f"Escudos azules acumulados en total: **{total_escudos}**")
+        embed.add_field(name='Estadisticas del torneo', value=stats_txt, inline=False)
 
     lineas_insignias = []
     for clave, nombre, _ in INSIGNIAS_FINALES:
@@ -1232,7 +1271,7 @@ async def otorgar_insignias_finales(interaction, db):
         texto_insignias = '\n'.join(lineas_insignias)
         if len(texto_insignias) > 1024:
             texto_insignias = texto_insignias[:1000] + '\n... (mas, contacta a la Directiva)'
-        embed.add_field(name='Insignias especiales', value=texto_insignias, inline=False)
+        embed.add_field(name=f'Insignias especiales ({len(lineas_insignias)})', value=texto_insignias, inline=False)
 
     if combinados:
         menciones = ' '.join(f"<@{j['discord_id']}>" for j in combinados)
@@ -1261,6 +1300,9 @@ async def otorgar_insignias_finales(interaction, db):
                              f"{'una insignia' if len(insignias) == 1 else f'{len(insignias)} insignias'}."),
                 colour=discord.Colour.gold())
             dm_embed.add_field(name='Insignias obtenidas', value='\n'.join(f'- {i}' for i in insignias), inline=False)
+            dm_embed.add_field(name='Tu resultado final',
+                                value=f"{jugador['total']} PTS | {jugador['wins']}W-{jugador['losses']}L ({jugador['winrate']}%) | {jugador['partidas']} partidas",
+                                inline=False)
             dm_embed.set_footer(text='Gracias por participar. Nos vemos en la proxima temporada.')
             await miembro.send(embed=dm_embed)
             dms_enviados += 1
@@ -1268,26 +1310,6 @@ async def otorgar_insignias_finales(interaction, db):
             pass
 
     return len(premios), dms_enviados
-
-
-@tree.command(name='finalizar_torneo', description='(Directiva) Publica resultados finales, otorga insignias/roles y avisa a los ganadores')
-@app_commands.describe(confirmar='Escribe SI (mayusculas) para confirmar el cierre y otorgamiento de premios')
-async def finalizar_torneo(interaction: discord.Interaction, confirmar: str):
-    if not await requiere_directiva(interaction):
-        return
-    await interaction.response.defer()
-    if confirmar != 'SI':
-        await interaction.followup.send(
-            'Accion cancelada. Escribe `confirmar: SI` (en mayusculas) para publicar los resultados finales, '
-            'crear/asignar los roles de insignias, dar las gracias y etiquetar a todos los participantes, y enviar '
-            'un DM de felicitacion a cada ganador. Usalo solo cuando el torneo realmente haya terminado.')
-        return
-    db = cargar_db()
-    n_premios, n_dms = await otorgar_insignias_finales(interaction, db)
-    guardar_db(db, forzar=True)
-    await interaction.followup.send(
-        f'Torneo finalizado. Se publicaron los resultados, se otorgaron {n_premios} insignias/roles y se enviaron '
-        f'{n_dms} mensajes directos a los ganadores.')
 
 
 # ------------------- COMANDOS -------------------
