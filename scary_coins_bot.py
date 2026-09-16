@@ -768,7 +768,8 @@ async def apostar_flex(interaction: discord.Interaction, match_id: str, equipo: 
     })
     await interaction.response.send_message(
         f'Apostaste {monto} {MONEDA_EMOJI} al Equipo {equipo.value} (cuota {cuota}x). '
-        f'Si gana, cobras {round(monto * cuota)} {MONEDA_EMOJI}.')
+        f'Si gana, cobras {monto + round(monto * cuota)} {MONEDA_EMOJI} en total '
+        f'(tu apuesta de vuelta + {round(monto * cuota)} de ganancia).')
 
 
 # ---------------------------------------------------------------------------
@@ -822,7 +823,8 @@ async def apostar_personalizada(interaction: discord.Interaction, equipo: app_co
     })
     await interaction.response.send_message(
         f'Apostaste {monto} {MONEDA_EMOJI} al Equipo {equipo.value} (cuota {cuota}x). '
-        f'Si gana, cobras {round(monto * cuota)} {MONEDA_EMOJI}.')
+        f'Si gana, cobras {monto + round(monto * cuota)} {MONEDA_EMOJI} en total '
+        f'(tu apuesta de vuelta + {round(monto * cuota)} de ganancia).')
 
 
 @tree.command(name='mis_apuestas', description='Ver tus apuestas pendientes')
@@ -898,7 +900,11 @@ def _pagar_apuestas_pendientes(tipo, referencia, ganador):
         gano = (f['objetivo'] == ganador)
         nuevo_estado = 'ganada' if gano else 'perdida'
         if gano:
-            premio = round(int(f['monto']) * float(f['cuota']))
+            # Si gana: se le devuelve la apuesta completa + la ganancia (monto x cuota) aparte.
+            # Asi ganar una apuesta nunca puede terminar en un saldo neto negativo.
+            monto_apostado = int(f['monto'])
+            ganancia = round(monto_apostado * float(f['cuota']))
+            premio = monto_apostado + ganancia
             _otorgar_coins(f['discord_id_apostador'], f['nombre_apostador'], premio)
         fila = dict(f)
         fila['estado'] = nuevo_estado
