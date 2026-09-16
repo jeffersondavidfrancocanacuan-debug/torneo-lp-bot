@@ -84,6 +84,7 @@ RANKED_QUEUE_TYPE = {QUEUE_FLEX: 'RANKED_FLEX_SR', QUEUE_SOLO: 'RANKED_SOLO_5x5'
 SUELDO_MENSUAL = 500
 BONUS_DIARIO_MIN, BONUS_DIARIO_MAX = 20, 40
 BONUS_DIARIO_COOLDOWN_HORAS = 20
+SALDO_INICIAL = 300  # Coins que se entregan una sola vez al vincular la cuenta por primera vez.
 
 HOUSE_EDGE = 0.10          # 10% de recorte sobre el pago de apuestas, para sostener la economia
 APUESTA_MINIMA = 10
@@ -362,9 +363,18 @@ async def vincular(interaction: discord.Interaction, riot_id: str, region: str):
         _escribir_fila(ws, VINCULOS_HEADERS, fila)
     else:
         _actualizar_fila(ws, VINCULOS_HEADERS, idx, fila)
+
+    # Saldo inicial de regalo, solo la primera vez que esta persona aparece en la economia
+    # (si ya tenia saldo -aunque sea 0 por haber usado /sueldo o /bonus_diario antes- no se le vuelve a dar).
+    _, _, idx_saldo = _obtener_saldo_fila(discord_id)
+    mensaje_saldo = ''
+    if idx_saldo is None:
+        nuevo_saldo = _otorgar_coins(discord_id, interaction.user.display_name, SALDO_INICIAL)
+        mensaje_saldo = f' Como regalo de bienvenida ya tenes **{nuevo_saldo} {MONEDA_EMOJI}** para apostar.'
+
     await interaction.followup.send(
         f'Cuenta vinculada: **{nombre_completo}**. Ya podes ganar logros automaticos en Flex y '
-        f'apostar en las partidas de otros (Flex, SoloQ y Personalizadas).', ephemeral=True)
+        f'apostar en las partidas de otros (Flex, SoloQ y Personalizadas).{mensaje_saldo}', ephemeral=True)
 
 
 @tree.command(name='saldo', description=f'Ver cuantos {MONEDA_NOMBRE} tenes (o los de otro)')
