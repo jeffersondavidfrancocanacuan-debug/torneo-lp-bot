@@ -154,7 +154,9 @@ STATS_HEADERS = ['discord_id', 'nombre', 'partidas', 'victorias', 'derrotas', 'v
 def _leer_tabla(nombre, headers):
     with _cache_lock:
         ws = _con_reintentos(lambda: _get_or_create_worksheet(nombre, headers))
-        filas = _con_reintentos(lambda: ws.get_all_records(expected_headers=headers))
+        # numericise_ignore=['all'] evita que gspread convierta el discord_id (numero muy largo) a
+        # int automaticamente al leer, lo que rompia las comparaciones "discord_id == str(id)".
+        filas = _con_reintentos(lambda: ws.get_all_records(expected_headers=headers, numericise_ignore=['all']))
         return ws, filas
 
 

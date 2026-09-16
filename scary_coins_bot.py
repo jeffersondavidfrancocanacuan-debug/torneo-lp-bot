@@ -159,7 +159,10 @@ def _con_reintentos(func, intentos=3, espera_base=2):
 def _leer_tabla(nombre, headers):
     with _cache_lock:
         ws = _con_reintentos(lambda: _get_or_create_worksheet(nombre, headers))
-        filas = _con_reintentos(lambda: ws.get_all_records(expected_headers=headers))
+        # numericise_ignore=['all'] evita que gspread convierta solo el discord_id (numero muy largo)
+        # a int automaticamente al leer, lo que rompia las comparaciones "discord_id == str(id)" en
+        # todo el bot (por eso alguien se vinculaba bien pero despues el bot decia que no tenia cuenta).
+        filas = _con_reintentos(lambda: ws.get_all_records(expected_headers=headers, numericise_ignore=['all']))
         return ws, filas
 
 
