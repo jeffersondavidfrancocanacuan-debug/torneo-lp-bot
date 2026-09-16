@@ -2,7 +2,7 @@
 Scary Coins Bot
 ----------------
 Economia virtual del servidor: sueldo mensual, bono diario, logros (mas dificiles que los del
-SoloQ Challenge) y apuestas en partidas de Flex Queue y en las Personalizadas del propio Discord.
+SoloQ Challenge) y apuestas en partidas de Flex, SoloQ y Personalizadas del propio Discord.
 Los Scary Coins NO tienen valor monetario real por si mismos; se pueden canjear por premios (RP,
 pase de batalla, etc.) mediante una solicitud que revisa el staff a mano, porque Riot no tiene una
 API para entregar RP automaticamente.
@@ -71,7 +71,11 @@ TIER_VALOR = {
 }
 RANK_VALOR = {'IV': 0, 'III': 100, 'II': 200, 'I': 300}
 
-QUEUE_FLEX = 440  # Flex 5v5. La solo/duo (420) es territorio del SoloQ Challenge, no de este bot.
+QUEUE_FLEX = 440  # Flex 5v5.
+QUEUE_SOLO = 420  # Solo/Duo. Los logros siguen siendo solo de Flex, pero las apuestas en vivo
+                   # (mismo comando /apostar_flex) ahora cubren las dos colas.
+QUEUES_APOSTABLES = {QUEUE_FLEX: 'Flex', QUEUE_SOLO: 'SoloQ'}
+RANKED_QUEUE_TYPE = {QUEUE_FLEX: 'RANKED_FLEX_SR', QUEUE_SOLO: 'RANKED_SOLO_5x5'}
 
 # ---------------------------------------------------------------------------
 # Numeros de la economia (ajustables)
@@ -262,8 +266,8 @@ def obtener_puuid(riot_id, region):
     return cuenta['puuid'], f"{cuenta['gameName']}#{cuenta['tagLine']}"
 
 
-def obtener_elo_flex(puuid, region):
-    """Elo numerico en Flex (RANKED_FLEX_SR) para un puuid. 0 si no tiene rango."""
+def obtener_elo_ranked(puuid, region, ranked_queue_type):
+    """Elo numerico en la cola ranked indicada (RANKED_FLEX_SR o RANKED_SOLO_5x5). 0 si no tiene rango."""
     plataforma = PLATFORM_MAP.get(region.lower())
     if not plataforma:
         return 0
@@ -272,9 +276,14 @@ def obtener_elo_flex(puuid, region):
     if r is None or r.status_code != 200:
         return 0
     for entry in r.json():
-        if entry['queueType'] == 'RANKED_FLEX_SR':
+        if entry['queueType'] == ranked_queue_type:
             return TIER_VALOR.get(entry['tier'], 0) + RANK_VALOR.get(entry['rank'], 0) + entry['leaguePoints']
     return 0
+
+
+def obtener_elo_flex(puuid, region):
+    """Elo numerico en Flex (RANKED_FLEX_SR) para un puuid. 0 si no tiene rango."""
+    return obtener_elo_ranked(puuid, region, 'RANKED_FLEX_SR')
 
 
 def obtener_partida_en_vivo(puuid, region):
@@ -293,7 +302,9 @@ def obtener_ultimos_match_ids(puuid, region, count=1, queue=QUEUE_FLEX):
     if not region_base:
         return []
     url = (f'https://{region_base}.api.riotgames.com/lol/match/v5/matches/by-puuid/{puuid}/ids'
-           f'?start=0&count={count}&queue={queue}')
+           f'?start=0&count={count}')
+    if queue is not None:
+        url += f'&queue={queue}'
     r = _riot_get(url)
     if r is None or r.status_code != 200:
         return []
@@ -353,7 +364,7 @@ async def vincular(interaction: discord.Interaction, riot_id: str, region: str):
         _actualizar_fila(ws, VINCULOS_HEADERS, idx, fila)
     await interaction.followup.send(
         f'Cuenta vinculada: **{nombre_completo}**. Ya podes ganar logros automaticos en Flex y '
-        f'apostar en las partidas de otros.', ephemeral=True)
+        f'apostar en las partidas de otros (Flex, SoloQ y Personalizadas).', ephemeral=True)
 
 
 @tree.command(name='saldo', description=f'Ver cuantos {MONEDA_NOMBRE} tenes (o los de otro)')
@@ -562,8 +573,8 @@ async def otorgar_logro(interaction: discord.Interaction, usuario: discord.Membe
 # Comandos: apuestas en Flex
 # ---------------------------------------------------------------------------
 
-@tree.command(name='partida_en_vivo', description='Busca la Flex en vivo de alguien vinculado y la abre a apuestas')
-@app_commands.describe(usuario='El jugador vinculado que esta jugando Flex ahora')
+@tree.command(name='partida_en_vivo', description='Busca la Flex o SoloQ en vivo de alguien vinculado y la abre a apuestas')
+@app_commands.describe(usuario='El jugador vinculado que esta jugando Flex o SoloQ ahora')
 async def partida_en_vivo(interaction: discord.Interaction, usuario: discord.Member):
     await interaction.response.defer()
     vinculo = _obtener_vinculo(str(usuario.id))
@@ -574,10 +585,13 @@ async def partida_en_vivo(interaction: discord.Interaction, usuario: discord.Mem
     if partida is None:
         await interaction.followup.send(f'{usuario.display_name} no esta en ninguna partida ahora mismo.')
         return
-    if partida.get('gameQueueConfigId') != QUEUE_FLEX:
-        await interaction.followup.send(f'{usuario.display_name} esta jugando, pero no es Flex '
-                                         '(este sistema de apuestas solo cubre Flex).')
+    queue_id = partida.get('gameQueueConfigId')
+    nombre_queue = QUEUES_APOSTABLES.get(queue_id)
+    if nombre_queue is None:
+        await interaction.followup.send(f'{usuario.display_name} esta jugando, pero no es Flex ni SoloQ '
+                                         '(este sistema de apuestas solo cubre esas dos colas).')
         return
+    ranked_queue_type = RANKED_QUEUE_TYPE[queue_id]
 
     match_id = f"{PLATFORM_MAP[vinculo['region']].upper()}_{partida['gameId']}"
     participantes = partida.get('participants', [])
@@ -592,7 +606,7 @@ async def partida_en_vivo(interaction: discord.Interaction, usuario: discord.Mem
         nombre_p = v['riot_id'] if v else p.get('riotId', p.get('summonerName', 'Jugador'))
         if v:
             jugadores_ids.append(v['discord_id'])
-            elo_p = obtener_elo_flex(puuid_p, v['region'])
+            elo_p = obtener_elo_ranked(puuid_p, v['region'], ranked_queue_type)
         else:
             elo_p = None
         if p.get('teamId') == 100:
@@ -633,7 +647,7 @@ async def partida_en_vivo(interaction: discord.Interaction, usuario: discord.Mem
             fila = fila_previa  # ya estaba trackeada y sigue abierta/cerrada, no la piso
         _actualizar_fila(ws, PARTIDA_FLEX_HEADERS, idx, fila)
 
-    embed = discord.Embed(title='Flex en vivo detectada', color=0x3498DB,
+    embed = discord.Embed(title=f'{nombre_queue} en vivo detectada', color=0x3498DB,
                            description=f'Apuestas abiertas por {VENTANA_APUESTA_FLEX_MIN} minutos desde la '
                                        f'primera deteccion. ID: `{match_id}`')
     embed.add_field(name=f"Equipo 1 (cuota {_cuota(prob1)}x)", value='\n'.join(equipo1_nombres) or '-', inline=True)
@@ -642,7 +656,7 @@ async def partida_en_vivo(interaction: discord.Interaction, usuario: discord.Mem
     await interaction.followup.send(embed=embed)
 
 
-@tree.command(name='apostar_flex', description='Apuesta en una Flex en vivo que ya este trackeada')
+@tree.command(name='apostar_flex', description='Apuesta en una Flex o SoloQ en vivo que ya este trackeada')
 @app_commands.describe(match_id='El ID de la partida (te lo muestra /partida_en_vivo)',
                         equipo='Equipo 1 o 2', monto=f'Cuantos {MONEDA_NOMBRE} apostar')
 @app_commands.choices(equipo=[app_commands.Choice(name='Equipo 1', value='1'),
@@ -889,7 +903,7 @@ async def resolver_apuestas_loop():
             vinculo = _obtener_vinculo(jugadores_ids[0])
             if not vinculo:
                 continue
-            ultimos = obtener_ultimos_match_ids(vinculo['puuid'], vinculo['region'], count=1, queue=QUEUE_FLEX)
+            ultimos = obtener_ultimos_match_ids(vinculo['puuid'], vinculo['region'], count=1, queue=None)
             if not ultimos or ultimos[0] != f['match_id']:
                 continue  # todavia no termino (o el ultimo registrado no es esta partida)
             match = obtener_match(f['match_id'], vinculo['region'])
