@@ -84,7 +84,7 @@ RANKED_QUEUE_TYPE = {QUEUE_FLEX: 'RANKED_FLEX_SR', QUEUE_SOLO: 'RANKED_SOLO_5x5'
 SUELDO_MENSUAL = 500
 BONUS_DIARIO_MIN, BONUS_DIARIO_MAX = 20, 40
 BONUS_DIARIO_COOLDOWN_HORAS = 20
-SALDO_INICIAL = 300  # Coins que se entregan una sola vez al vincular la cuenta por primera vez.
+SALDO_INICIAL = 100  # Coins que se entregan una sola vez al vincular la cuenta por primera vez.
 
 HOUSE_EDGE = 0.10          # 10% de recorte sobre el pago de apuestas, para sostener la economia
 APUESTA_MINIMA = 10
@@ -100,12 +100,12 @@ ACHIEVEMENTS = {
 }
 
 TIENDA = [
-    {'id': 'emblema_sorpresa', 'nombre': 'Emblema/skin shard sorpresa', 'costo': 1000},
-    {'id': 'rp_150', 'nombre': '150 RP', 'costo': 3000},
-    {'id': 'rp_350', 'nombre': '350 RP', 'costo': 6000},
-    {'id': 'pase_batalla', 'nombre': 'Pase de batalla del evento actual', 'costo': 12000},
-    {'id': 'rp_650', 'nombre': '650 RP', 'costo': 12000},
-    {'id': 'rp_1350', 'nombre': '1350 RP', 'costo': 25000},
+    {'id': 'emblema_sorpresa', 'nombre': 'Emblema/skin shard sorpresa', 'costo': 5000},
+    {'id': 'rp_150', 'nombre': '150 RP', 'costo': 15000},
+    {'id': 'rp_350', 'nombre': '350 RP', 'costo': 30000},
+    {'id': 'pase_batalla', 'nombre': 'Pase de batalla del evento actual', 'costo': 60000},
+    {'id': 'rp_650', 'nombre': '650 RP', 'costo': 60000},
+    {'id': 'rp_1350', 'nombre': '1350 RP', 'costo': 125000},
 ]
 
 intents_ok = True
