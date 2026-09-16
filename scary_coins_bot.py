@@ -586,24 +586,12 @@ async def otorgar_logro(interaction: discord.Interaction, usuario: discord.Membe
 # Comandos: apuestas en Flex
 # ---------------------------------------------------------------------------
 
-@tree.command(name='partida_en_vivo', description='Busca la Flex o SoloQ en vivo de alguien vinculado y la abre a apuestas')
-@app_commands.describe(usuario='El jugador vinculado que esta jugando Flex o SoloQ ahora')
-async def partida_en_vivo(interaction: discord.Interaction, usuario: discord.Member):
-    await interaction.response.defer()
-    vinculo = _obtener_vinculo(str(usuario.id))
-    if vinculo is None:
-        await interaction.followup.send(f'{usuario.display_name} no tiene cuenta vinculada (/vincular).')
-        return
-    partida = obtener_partida_en_vivo(vinculo['puuid'], vinculo['region'])
-    if partida is None:
-        await interaction.followup.send(f'{usuario.display_name} no esta en ninguna partida ahora mismo.')
-        return
+def _procesar_partida_en_vivo(vinculo, partida):
+    """Registra (o recupera) una partida en vivo apostable y arma su embed. None si la cola no aplica."""
     queue_id = partida.get('gameQueueConfigId')
     nombre_queue = QUEUES_APOSTABLES.get(queue_id)
     if nombre_queue is None:
-        await interaction.followup.send(f'{usuario.display_name} esta jugando, pero no es Flex ni SoloQ '
-                                         '(este sistema de apuestas solo cubre esas dos colas).')
-        return
+        return None
     ranked_queue_type = RANKED_QUEUE_TYPE[queue_id]
 
     match_id = f"{PLATFORM_MAP[vinculo['region']].upper()}_{partida['gameId']}"
@@ -661,12 +649,67 @@ async def partida_en_vivo(interaction: discord.Interaction, usuario: discord.Mem
         _actualizar_fila(ws, PARTIDA_FLEX_HEADERS, idx, fila)
 
     embed = discord.Embed(title=f'{nombre_queue} en vivo detectada', color=0x3498DB,
-                           description=f'Apuestas abiertas por {VENTANA_APUESTA_FLEX_MIN} minutos desde la '
-                                       f'primera deteccion. ID: `{match_id}`')
-    embed.add_field(name=f"Equipo 1 (cuota {_cuota(prob1)}x)", value='\n'.join(equipo1_nombres) or '-', inline=True)
-    embed.add_field(name=f"Equipo 2 (cuota {_cuota(1 - prob1)}x)", value='\n'.join(equipo2_nombres) or '-', inline=True)
+                           description=f'Cola: **{nombre_queue}**. Apuestas abiertas por '
+                                       f'{VENTANA_APUESTA_FLEX_MIN} minutos desde la primera deteccion. '
+                                       f'ID: `{match_id}`')
+    equipo1_prob = round(prob1 * 100)
+    equipo2_prob = 100 - equipo1_prob
+    embed.add_field(name=f"Equipo 1 (cuota {_cuota(prob1)}x, {equipo1_prob}%)",
+                     value='\n'.join(equipo1_nombres) or '-', inline=True)
+    embed.add_field(name=f"Equipo 2 (cuota {_cuota(1 - prob1)}x, {equipo2_prob}%)",
+                     value='\n'.join(equipo2_nombres) or '-', inline=True)
     embed.set_footer(text='Usa /apostar_flex para apostar (no podes apostar en tu propia partida).')
-    await interaction.followup.send(embed=embed)
+    return embed
+
+
+@tree.command(name='partida_en_vivo',
+              description='Busca la Flex o SoloQ en vivo de alguien vinculado (o de todos) y la abre a apuestas')
+@app_commands.describe(usuario='Opcional: un jugador puntual. Si lo dejas vacio, revisa a TODOS los vinculados.')
+async def partida_en_vivo(interaction: discord.Interaction, usuario: discord.Member = None):
+    await interaction.response.defer()
+
+    if usuario is not None:
+        vinculo = _obtener_vinculo(str(usuario.id))
+        if vinculo is None:
+            await interaction.followup.send(f'{usuario.display_name} no tiene cuenta vinculada (/vincular).')
+            return
+        partida = obtener_partida_en_vivo(vinculo['puuid'], vinculo['region'])
+        if partida is None:
+            await interaction.followup.send(f'{usuario.display_name} no esta en ninguna partida ahora mismo.')
+            return
+        embed = _procesar_partida_en_vivo(vinculo, partida)
+        if embed is None:
+            await interaction.followup.send(f'{usuario.display_name} esta jugando, pero no es Flex ni SoloQ '
+                                             '(este sistema de apuestas solo cubre esas dos colas).')
+            return
+        await interaction.followup.send(embed=embed)
+        return
+
+    # Sin usuario: revisa a todos los vinculados y muestra todas las partidas apostables que encuentre.
+    vinculos = _todos_los_vinculos()
+    match_ids_vistos = set()
+    embeds = []
+    for v in vinculos:
+        if not v.get('puuid'):
+            continue
+        partida = obtener_partida_en_vivo(v['puuid'], v['region'])
+        if partida is None:
+            continue
+        match_id = f"{PLATFORM_MAP.get(v['region'], '')}_{partida.get('gameId')}"
+        if match_id in match_ids_vistos:
+            continue  # ya la procesamos (otro jugador vinculado en la misma partida)
+        match_ids_vistos.add(match_id)
+        embed = _procesar_partida_en_vivo(v, partida)
+        if embed is not None:
+            embeds.append(embed)
+        if len(embeds) >= 10:  # limite de embeds por mensaje de Discord
+            break
+
+    if not embeds:
+        await interaction.followup.send('Nadie de los vinculados esta jugando Flex o SoloQ ahora mismo.')
+        return
+    await interaction.followup.send(
+        content=f'Encontre {len(embeds)} partida(s) en vivo apostable(s):', embeds=embeds)
 
 
 @tree.command(name='apostar_flex', description='Apuesta en una Flex o SoloQ en vivo que ya este trackeada')
